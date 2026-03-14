@@ -363,10 +363,21 @@ export default function App() {
 
   useEffect(() => {
     if (currentView === 'ledgers') {
-      fetch('/api/modern_treasury/ledgers')
-        .then(res => res.json())
-        .then(data => setLedgers(data))
-        .catch(err => console.error(err));
+      const fetchLedgers = async () => {
+        try {
+          const token = await auth.currentUser?.getIdToken();
+          const response = await fetch('/api/modern_treasury/ledgers', {
+            headers: {
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          const data = await response.json();
+          setLedgers(data);
+        } catch (err) {
+          console.error(err);
+        }
+      };
+      fetchLedgers();
     }
   }, [currentView]);
 

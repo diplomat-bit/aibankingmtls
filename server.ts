@@ -8,24 +8,37 @@ import ModernTreasury from "modern-treasury";
 import axios from "axios";
 import https from "https";
 import { ensureCertsExist } from "./scripts/generate-certs.js";
-import { auth } from "express-oauth2-jwt-bearer";
+import admin from "firebase-admin";
+import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
 
 dotenv.config();
+
+// Initialize Firebase Admin
+process.env.GOOGLE_CLOUD_PROJECT = firebaseConfig.projectId;
+admin.initializeApp({
+  projectId: firebaseConfig.projectId,
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// JWT Middleware configuration
-const secret = process.env.AUTH0_JWT_SECRET;
-if (!secret) {
-  throw new Error('AUTH0_JWT_SECRET environment variable is required');
-}
-const jwtCheck = auth({
-  secret: secret,
-  audience: 'https://auth.aibanking.dev/api',
-  issuerBaseURL: 'https://auth.aibanking.dev/',
-  tokenSigningAlg: 'HS256'
-});
+// Firebase Auth Middleware
+const firebaseAuthCheck = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const idToken = authHeader.split('Bearer ')[1];
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    (req as any).user = decodedToken;
+    next();
+  } catch (error) {
+    console.error('Error verifying Firebase ID token:', error);
+    res.status(401).json({ error: 'Unauthorized' });
+  }
+};
 
 async function startServer() {
   const app = express();
@@ -37,8 +50,8 @@ async function startServer() {
 
   app.use(express.json());
 
-  // Protect API routes
-  app.use('/api', jwtCheck);
+  // Protect API routes with Firebase Auth
+  app.use('/api', firebaseAuthCheck);
 
   // API routes
   app.get("/api/health", async (req, res) => {
@@ -132,9 +145,19 @@ async function startServer() {
       return res.redirect(`https://app.moderntreasury.com/oauth/authorize?${params}`);
     }
 
+    if (service === 'citi') {
+      const params = new URLSearchParams({
+        response_type: 'code',
+        client_id: process.env.CITI_CLIENT_ID!,
+        redirect_uri: redirectUri,
+        scope: 'accounts_details_transactions accounts_routing_number customers_profiles accounts_statements accounts_tax_statements',
+        state: JSON.stringify({ service, userId })
+      });
+      return res.redirect(`https://api.citi.com/api/identity/auth/v1/oauth2/authorize?${params}`);
+    }
+
     if (service === 'aibanking') {
       try {
-        // Try PAR first with mTLS
         const parResponse = await axios.post('https://auth.aibanking.dev/oauth/par', 
           new URLSearchParams({
             response_type: 'code',
@@ -154,20 +177,11 @@ async function startServer() {
           const { request_uri } = parResponse.data;
           return res.redirect(`https://auth.aibanking.dev/authorize?request_uri=${request_uri}&client_id=${clientId}`);
         }
+        throw new Error(`PAR failed with status ${parResponse.status}`);
       } catch (error: any) {
-        console.error('PAR Error, falling back:', error.response?.data || error.message);
+        console.error('PAR Error Details:', JSON.stringify(error.response?.data, null, 2));
+        return res.status(500).send(`PAR authentication failed: ${JSON.stringify(error.response?.data)}`);
       }
-
-      // Fallback to standard
-      const params = new URLSearchParams({
-        response_type: 'code',
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        scope: 'openid profile email offline_access',
-        audience: 'https://aibanking.us.auth0.com/userinfo',
-        state: JSON.stringify({ service, userId })
-      });
-      return res.redirect(`https://auth.aibanking.dev/authorize?${params}`);
     }
 
     res.status(400).send('Invalid service');
@@ -308,6 +322,23 @@ async function startServer() {
         } else {
           console.error('Modern Treasury Token Exchange Failed:', await tokenResponse.text());
         }
+      } else if (service === 'citi') {
+        const tokenResponse = await axios.post('https://api.citi.com/api/identity/auth/v1/oauth2/token/us/gcb',
+          new URLSearchParams({
+            grant_type: 'authorization_code',
+            code: code as string,
+            redirect_uri: redirectUri
+          }),
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Authorization': `Basic ${Buffer.from(`${process.env.CITI_CLIENT_ID}:${process.env.CITI_CLIENT_SECRET}`).toString('base64')}`
+            }
+          }
+        );
+        const data = tokenResponse.data;
+        accessToken = data.access_token;
+        refreshToken = data.refresh_token;
       } else if (service === 'aibanking') {
         try {
           const tokenResponse = await axios.post('https://auth.aibanking.dev/oauth/token', 

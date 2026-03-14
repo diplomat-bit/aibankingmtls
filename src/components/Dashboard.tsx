@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { LayoutDashboard, CreditCard, Landmark, Activity } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { auth } from '../firebase';
 
 interface Account {
   id: string;
@@ -15,14 +16,24 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const response = await fetch('/api/modern_treasury/accounts');
+        const token = await auth.currentUser?.getIdToken();
+        const response = await fetch('/api/modern_treasury/accounts', {
+          headers: {
+            'Authorization': `Bearer ${token}`
+          }
+        });
         const data = await response.json();
         // Assuming data is an array of accounts, mapping to our interface
-        setAccounts(data.map((acc: any) => ({
-            id: acc.id,
-            name: acc.name,
-            balance: acc.balances?.current_balance || 0
-        })));
+        if (Array.isArray(data)) {
+          setAccounts(data.map((acc: any) => ({
+              id: acc.id,
+              name: acc.name,
+              balance: acc.balances?.current_balance || 0
+          })));
+        } else {
+          console.error('Expected array of accounts, got:', data);
+          setAccounts([]); // Set to empty array to avoid crash
+        }
       } catch (error) {
         console.error('Error fetching accounts:', error);
       } finally {

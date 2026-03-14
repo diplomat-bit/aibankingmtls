@@ -8,11 +8,24 @@ import ModernTreasury from "modern-treasury";
 import axios from "axios";
 import https from "https";
 import { ensureCertsExist } from "./scripts/generate-certs.js";
+import { auth } from "express-oauth2-jwt-bearer";
 
 dotenv.config();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// JWT Middleware configuration
+const secret = process.env.AUTH0_JWT_SECRET;
+if (!secret) {
+  throw new Error('AUTH0_JWT_SECRET environment variable is required');
+}
+const jwtCheck = auth({
+  secret: secret,
+  audience: 'https://auth.aibanking.dev/api',
+  issuerBaseURL: 'https://auth.aibanking.dev/',
+  tokenSigningAlg: 'HS256'
+});
 
 async function startServer() {
   const app = express();
@@ -23,6 +36,9 @@ async function startServer() {
   const httpsAgent = new https.Agent({ cert, key });
 
   app.use(express.json());
+
+  // Protect API routes
+  app.use('/api', jwtCheck);
 
   // API routes
   app.get("/api/health", async (req, res) => {
@@ -119,13 +135,13 @@ async function startServer() {
     if (service === 'aibanking') {
       try {
         // Try PAR first with mTLS
-        const parResponse = await axios.post('https://aibanking.us.auth0.com/oauth/par', 
+        const parResponse = await axios.post('https://auth.aibanking.dev/oauth/par', 
           new URLSearchParams({
             response_type: 'code',
             client_id: clientId,
             redirect_uri: redirectUri,
             scope: 'openid profile email offline_access',
-            audience: 'https://aibanking.us.auth0.com/userinfo',
+            audience: 'https://auth.aibanking.dev/userinfo',
             state: JSON.stringify({ service, userId })
           }),
           {
@@ -136,7 +152,7 @@ async function startServer() {
 
         if (parResponse.status === 201 || parResponse.status === 200) {
           const { request_uri } = parResponse.data;
-          return res.redirect(`https://aibanking.us.auth0.com/authorize?request_uri=${request_uri}&client_id=${clientId}`);
+          return res.redirect(`https://auth.aibanking.dev/authorize?request_uri=${request_uri}&client_id=${clientId}`);
         }
       } catch (error: any) {
         console.error('PAR Error, falling back:', error.response?.data || error.message);
@@ -151,7 +167,7 @@ async function startServer() {
         audience: 'https://aibanking.us.auth0.com/userinfo',
         state: JSON.stringify({ service, userId })
       });
-      return res.redirect(`https://aibanking.us.auth0.com/authorize?${params}`);
+      return res.redirect(`https://auth.aibanking.dev/authorize?${params}`);
     }
 
     res.status(400).send('Invalid service');
@@ -195,7 +211,7 @@ async function startServer() {
             client_id: clientId,
             redirect_uri: redirectUri,
             scope: 'openid profile email offline_access',
-            audience: 'https://aibanking.us.auth0.com/userinfo',
+            audience: 'https://auth.aibanking.dev/userinfo',
             state: JSON.stringify({ service, userId })
           }),
           {
@@ -207,7 +223,7 @@ async function startServer() {
         if (parResponse.status === 201 || parResponse.status === 200) {
           const { request_uri } = parResponse.data;
           return res.json({ 
-            url: `https://aibanking.us.auth0.com/authorize?request_uri=${request_uri}&client_id=${clientId}` 
+            url: `https://auth.aibanking.dev/authorize?request_uri=${request_uri}&client_id=${clientId}` 
           });
         }
       } catch (error: any) {
@@ -220,10 +236,10 @@ async function startServer() {
         client_id: clientId,
         redirect_uri: redirectUri,
         scope: 'openid profile email offline_access',
-        audience: 'https://aibanking.us.auth0.com/userinfo',
+        audience: 'https://auth.aibanking.dev/userinfo',
         state: JSON.stringify({ service, userId })
       });
-      return res.json({ url: `https://aibanking.us.auth0.com/authorize?${params}` });
+      return res.json({ url: `https://auth.aibanking.dev/authorize?${params}` });
     }
 
     res.status(400).json({ error: 'Invalid service' });
@@ -294,7 +310,7 @@ async function startServer() {
         }
       } else if (service === 'aibanking') {
         try {
-          const tokenResponse = await axios.post('https://aibanking.us.auth0.com/oauth/token', 
+          const tokenResponse = await axios.post('https://auth.aibanking.dev/oauth/token', 
             {
               grant_type: 'authorization_code',
               client_id: process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY',
@@ -353,7 +369,7 @@ async function startServer() {
   // Maps SCIM v2 attributes to Auth0 profile attributes as requested
   // ============================================================================
   
-  const AUTH0_SCIM_URL = 'https://aibanking.us.auth0.com/scim/v2/connections/con_kLNozDwRAcKamjtZ/Users';
+  const AUTH0_SCIM_URL = 'https://auth.aibanking.dev/scim/v2/connections/con_KmWlzuo4fspYtX2u/Users';
 
   // 1. Endpoint to RECEIVE SCIM requests and map them to Auth0 format
   app.post('/api/scim/v2/Users', async (req, res) => {
@@ -451,11 +467,16 @@ async function startServer() {
         }
       };
 
+      const scimToken = process.env.AUTH0_SCIM_TOKEN;
+      if (!scimToken) {
+        return res.status(500).json({ error: 'AUTH0_SCIM_TOKEN environment variable is required' });
+      }
+
       const response = await fetch(AUTH0_SCIM_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/scim+json',
-          'Authorization': `Bearer ${process.env.AUTH0_SCIM_TOKEN || 'YOUR_SCIM_TOKEN'}`
+          'Authorization': `Bearer ${scimToken}`
         },
         body: JSON.stringify(scimPayload)
       });

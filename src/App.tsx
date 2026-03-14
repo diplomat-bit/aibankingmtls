@@ -53,6 +53,9 @@ import {
   RefreshCw,
   Trash2
 } from 'lucide-react';
+import { Dashboard } from './components/Dashboard';
+import { ModelsView } from './components/ModelsView';
+import { ApisView } from './components/ApisView';
 import { 
   AreaChart, 
   Area, 
@@ -181,7 +184,7 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const [isAddingTransaction, setIsAddingTransaction] = useState(false);
   const [newTx, setNewTx] = useState({ amount: '', description: '', type: 'expense' });
-  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers' | 'apis'>('dashboard');
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -554,6 +557,12 @@ export default function App() {
             active={currentView === 'models'} 
             onClick={() => setCurrentView('models')}
           />
+          <NavItem 
+            icon={<LayoutDashboard className="w-5 h-5" />} 
+            label="APIs" 
+            active={currentView === 'apis'} 
+            onClick={() => setCurrentView('apis')}
+          />
         </nav>
 
         <div className="mt-auto pt-6 border-t border-white/5">
@@ -580,6 +589,7 @@ export default function App() {
               {currentView === 'advisor' && 'AI Financial Advisor'}
               {currentView === 'connections' && 'Service Connections'}
               {currentView === 'models' && 'API Models'}
+              {currentView === 'apis' && 'API Endpoints'}
             </h2>
             <p className="text-zinc-500">
               {currentView === 'dashboard' && "Here's what's happening with your finances today."}
@@ -589,6 +599,7 @@ export default function App() {
               {currentView === 'advisor' && "Get intelligent insights and personalized advice."}
               {currentView === 'connections' && "Connect third-party services like Stripe and Modern Treasury."}
               {currentView === 'models' && "View all 2000+ available API models."}
+              {currentView === 'apis' && "View all available API endpoints."}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -609,6 +620,18 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        {currentView === 'dashboard' && (
+          <Dashboard />
+        )}
+        
+        {currentView === 'models' && (
+          <ModelsView />
+        )}
+
+        {currentView === 'apis' && (
+          <ApisView />
+        )}
 
         {currentView === 'dashboard' && (
           <>

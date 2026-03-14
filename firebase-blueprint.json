@@ -1,0 +1,137 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Unique user ID" },
+        "displayName": { "type": "string", "description": "User's full name" },
+        "email": { "type": "string", "description": "User's email address" },
+        "photoURL": { "type": "string", "description": "User's profile picture URL" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Account creation timestamp" }
+      },
+      "required": ["uid", "email"]
+    },
+    "Account": {
+      "title": "Account",
+      "description": "Bank account details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique account ID" },
+        "userId": { "type": "string", "description": "Owner's user ID" },
+        "type": { "type": "string", "enum": ["checking", "savings"], "description": "Account type" },
+        "balance": { "type": "number", "description": "Current balance" },
+        "currency": { "type": "string", "description": "Currency code (e.g., USD)" },
+        "accountNumber": { "type": "string", "description": "Masked account number" }
+      },
+      "required": ["id", "userId", "type", "balance"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial transaction record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique transaction ID" },
+        "accountId": { "type": "string", "description": "Source account ID" },
+        "userId": { "type": "string", "description": "Owner's user ID" },
+        "amount": { "type": "number", "description": "Transaction amount (negative for expense)" },
+        "category": { "type": "string", "description": "Spending category (e.g., Food, Rent)" },
+        "description": { "type": "string", "description": "Transaction description" },
+        "date": { "type": "string", "format": "date-time", "description": "Transaction timestamp" },
+        "merchant": { "type": "string", "description": "Merchant name" }
+      },
+      "required": ["id", "accountId", "userId", "amount", "date"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "AI assistant chat message",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique message ID" },
+        "userId": { "type": "string", "description": "Owner's user ID" },
+        "role": { "type": "string", "enum": ["user", "model"], "description": "Message sender role" },
+        "content": { "type": "string", "description": "Message text" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "Message timestamp" }
+      },
+      "required": ["id", "userId", "role", "content", "timestamp"]
+    },
+    "Investment": {
+      "title": "Investment",
+      "description": "Investment asset details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique investment ID" },
+        "userId": { "type": "string", "description": "Owner's user ID" },
+        "symbol": { "type": "string", "description": "Ticker symbol (e.g., AAPL, BTC)" },
+        "name": { "type": "string", "description": "Asset name" },
+        "quantity": { "type": "number", "description": "Number of units owned" },
+        "costBasis": { "type": "number", "description": "Average purchase price" },
+        "currentPrice": { "type": "number", "description": "Latest market price" },
+        "type": { "type": "string", "enum": ["stock", "crypto", "etf", "bond"], "description": "Asset type" }
+      },
+      "required": ["id", "userId", "symbol", "quantity", "costBasis", "type"]
+    },
+    "Card": {
+      "title": "Card",
+      "description": "Credit or debit card details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique card ID" },
+        "userId": { "type": "string", "description": "Owner's user ID" },
+        "type": { "type": "string", "enum": ["debit", "credit"], "description": "Card type" },
+        "brand": { "type": "string", "description": "Card brand (e.g., Visa, Mastercard)" },
+        "last4": { "type": "string", "description": "Last 4 digits of the card number" },
+        "expiryDate": { "type": "string", "description": "Expiry date (MM/YY)" },
+        "status": { "type": "string", "enum": ["active", "blocked", "expired"], "description": "Card status" },
+        "limit": { "type": "number", "description": "Credit limit (for credit cards)" },
+        "spent": { "type": "number", "description": "Amount spent in current billing cycle" }
+      },
+      "required": ["id", "userId", "type", "brand", "last4", "status"]
+    },
+    "UserConnection": {
+      "title": "UserConnection",
+      "description": "OAuth connection details for third-party services",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner's user ID" },
+        "service": { "type": "string", "enum": ["stripe", "modern_treasury", "aibanking"], "description": "Service name" },
+        "accessToken": { "type": "string", "description": "OAuth access token" },
+        "refreshToken": { "type": "string", "description": "OAuth refresh token" },
+        "expiresAt": { "type": "number", "description": "Token expiration timestamp" },
+        "connectedAt": { "type": "string", "format": "date-time", "description": "Connection timestamp" }
+      },
+      "required": ["userId", "service", "accessToken"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile documents"
+    },
+    "/accounts/{accountId}": {
+      "schema": "Account",
+      "description": "Bank account documents"
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Transaction records"
+    },
+    "/chats/{chatId}": {
+      "schema": "ChatMessage",
+      "description": "AI chat history"
+    },
+    "/investments/{investmentId}": {
+      "schema": "Investment",
+      "description": "Investment assets"
+    },
+    "/cards/{cardId}": {
+      "schema": "Card",
+      "description": "Credit and debit cards"
+    },
+    "/user_connections/{connectionId}": {
+      "schema": "UserConnection",
+      "description": "User OAuth connections"
+    }
+  }
+}

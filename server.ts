@@ -5,6 +5,9 @@ import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 import Stripe from "stripe";
 import ModernTreasury from "modern-treasury";
+import axios from "axios";
+import https from "https";
+import { ensureCertsExist } from "./scripts/generate-certs.js";
 
 dotenv.config();
 
@@ -14,6 +17,10 @@ const __dirname = path.dirname(__filename);
 async function startServer() {
   const app = express();
   const PORT = 3000;
+
+  // Ensure mTLS certificates exist
+  const { cert, key } = ensureCertsExist();
+  const httpsAgent = new https.Agent({ cert, key });
 
   app.use(express.json());
 
@@ -61,6 +68,26 @@ async function startServer() {
     }
   });
 
+  // Modern Treasury Ledgers Integration
+  app.get("/api/modern_treasury/ledgers", async (req, res) => {
+    try {
+      if (!process.env.MODERN_TREASURY_API_KEY || !process.env.MODERN_TREASURY_ORGANIZATION_ID) {
+        return res.status(500).json({ error: "Modern Treasury credentials not configured" });
+      }
+
+      const mt = new ModernTreasury({
+        apiKey: process.env.MODERN_TREASURY_API_KEY,
+        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID,
+      });
+      
+      const ledgers = await mt.ledgers.list();
+      res.json(ledgers);
+    } catch (error) {
+      console.error("Modern Treasury Ledger API Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   // OAuth Login Redirect (to avoid popup blocking)
   app.get("/api/auth/login", async (req, res) => {
     const { service, userId } = req.query;
@@ -91,26 +118,28 @@ async function startServer() {
 
     if (service === 'aibanking') {
       try {
-        // Try PAR first
-        const parResponse = await fetch('https://aibanking.us.auth0.com/oauth/par', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
+        // Try PAR first with mTLS
+        const parResponse = await axios.post('https://aibanking.us.auth0.com/oauth/par', 
+          new URLSearchParams({
             response_type: 'code',
             client_id: clientId,
             redirect_uri: redirectUri,
             scope: 'openid profile email offline_access',
             audience: 'https://aibanking.us.auth0.com/userinfo',
             state: JSON.stringify({ service, userId })
-          })
-        });
+          }),
+          {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            httpsAgent
+          }
+        );
 
-        if (parResponse.ok) {
-          const { request_uri } = await parResponse.json();
+        if (parResponse.status === 201 || parResponse.status === 200) {
+          const { request_uri } = parResponse.data;
           return res.redirect(`https://aibanking.us.auth0.com/authorize?request_uri=${request_uri}&client_id=${clientId}`);
         }
-      } catch (error) {
-        console.error('PAR Error, falling back:', error);
+      } catch (error: any) {
+        console.error('PAR Error, falling back:', error.response?.data || error.message);
       }
 
       // Fallback to standard
@@ -159,32 +188,30 @@ async function startServer() {
       const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
       
       try {
-        // Pushed Authorization Request (PAR)
-        const parResponse = await fetch('https://aibanking.us.auth0.com/oauth/par', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
+        // Pushed Authorization Request (PAR) with mTLS
+        const parResponse = await axios.post('https://aibanking.us.auth0.com/oauth/par', 
+          new URLSearchParams({
             response_type: 'code',
             client_id: clientId,
             redirect_uri: redirectUri,
             scope: 'openid profile email offline_access',
             audience: 'https://aibanking.us.auth0.com/userinfo',
             state: JSON.stringify({ service, userId })
-          })
-        });
+          }),
+          {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            httpsAgent
+          }
+        );
 
-        if (parResponse.ok) {
-          const { request_uri } = await parResponse.json();
+        if (parResponse.status === 201 || parResponse.status === 200) {
+          const { request_uri } = parResponse.data;
           return res.json({ 
             url: `https://aibanking.us.auth0.com/authorize?request_uri=${request_uri}&client_id=${clientId}` 
           });
-        } else {
-          const error = await parResponse.text();
-          console.error('PAR Request Failed:', error);
-          // Fallback to standard authorize if PAR fails (optional, but safer to just throw if PAR is required)
         }
-      } catch (error) {
-        console.error('PAR Error:', error);
+      } catch (error: any) {
+        console.error('PAR Error:', error.response?.data || error.message);
       }
 
       // Fallback to standard authorize if PAR fails or is not supported
@@ -266,24 +293,27 @@ async function startServer() {
           console.error('Modern Treasury Token Exchange Failed:', await tokenResponse.text());
         }
       } else if (service === 'aibanking') {
-        const tokenResponse = await fetch('https://aibanking.us.auth0.com/oauth/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            grant_type: 'authorization_code',
-            client_id: process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY',
-            code: code,
-            redirect_uri: redirectUri
-          })
-        });
+        try {
+          const tokenResponse = await axios.post('https://aibanking.us.auth0.com/oauth/token', 
+            {
+              grant_type: 'authorization_code',
+              client_id: process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY',
+              code: code,
+              redirect_uri: redirectUri
+            },
+            {
+              headers: { 'Content-Type': 'application/json' },
+              httpsAgent
+            }
+          );
 
-        if (tokenResponse.ok) {
-          const data = await tokenResponse.json();
-          accessToken = data.access_token;
-          refreshToken = data.refresh_token || refreshToken;
-        } else {
-          const errorData = await tokenResponse.text();
-          console.error('AI Banking Token Exchange Failed:', errorData);
+          if (tokenResponse.status === 200) {
+            const data = tokenResponse.data;
+            accessToken = data.access_token;
+            refreshToken = data.refresh_token || refreshToken;
+          }
+        } catch (error: any) {
+          console.error('AI Banking Token Exchange Failed:', error.response?.data || error.message);
         }
       }
       

@@ -67,3 +67,10 @@ export interface UserConnection {
   connectedAt: string;
   externalAccountId?: string;
 }
+
+export interface Ledger {
+  id: string;
+  name: string;
+  description: string;
+  currency: string;
+}

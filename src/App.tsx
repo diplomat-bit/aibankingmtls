@@ -25,9 +25,10 @@ import {
   getDoc
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
-import { UserProfile, Account, Transaction, ChatMessage, Investment, Card, UserConnection } from './types';
+import { UserProfile, Account, Transaction, ChatMessage, Investment, Card, UserConnection, Ledger } from './types';
 import { getFinancialAdvice, categorizeTransaction } from './services/geminiService';
 import { connectionService } from './services/connectionService';
+import { modelNames } from './modelNames';
 import { 
   LayoutDashboard, 
   CreditCard, 
@@ -174,12 +175,13 @@ export default function App() {
   const [cards, setCards] = useState<Card[]>([]);
   const [connections, setConnections] = useState<UserConnection[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [ledgers, setLedgers] = useState<Ledger[]>([]);
   const [loading, setLoading] = useState(true);
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [isAddingTransaction, setIsAddingTransaction] = useState(false);
   const [newTx, setNewTx] = useState({ amount: '', description: '', type: 'expense' });
-  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers'>('dashboard');
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -210,43 +212,59 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    let unsubscribes: (() => void)[] = [];
+
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
+      
+      // Clear previous listeners if any
+      unsubscribes.forEach(unsub => unsub());
+      unsubscribes = [];
+
       if (firebaseUser) {
         // Ensure user profile exists
         const userRef = doc(db, 'users', firebaseUser.uid);
-        const userSnap = await getDoc(userRef);
-        
-        if (!userSnap.exists()) {
-          const newProfile: UserProfile = {
-            uid: firebaseUser.uid,
-            displayName: firebaseUser.displayName,
-            email: firebaseUser.email,
-            photoURL: firebaseUser.photoURL,
-            createdAt: new Date().toISOString(),
-          };
-          await setDoc(userRef, newProfile);
-          setProfile(newProfile);
-        } else {
-          setProfile(userSnap.data() as UserProfile);
+        try {
+          const userSnap = await getDoc(userRef);
+          
+          if (!userSnap.exists()) {
+            const newProfile: UserProfile = {
+              uid: firebaseUser.uid,
+              displayName: firebaseUser.displayName,
+              email: firebaseUser.email,
+              photoURL: firebaseUser.photoURL,
+              createdAt: new Date().toISOString(),
+            };
+            await setDoc(userRef, newProfile);
+            setProfile(newProfile);
+          } else {
+            setProfile(userSnap.data() as UserProfile);
+          }
+        } catch (error) {
+          console.error("Error fetching user profile:", error);
         }
 
         // Initialize default account if none exists
         const accountsQuery = query(collection(db, 'accounts'), where('userId', '==', firebaseUser.uid));
-        onSnapshot(accountsQuery, async (snapshot) => {
+        const unsubAccounts = onSnapshot(accountsQuery, async (snapshot) => {
           if (snapshot.empty) {
-            await addDoc(collection(db, 'accounts'), {
-              userId: firebaseUser.uid,
-              type: 'checking',
-              balance: 5000,
-              currency: 'USD',
-              accountNumber: '**** 4242',
-              id: Math.random().toString(36).substr(2, 9)
-            });
+            try {
+              await addDoc(collection(db, 'accounts'), {
+                userId: firebaseUser.uid,
+                type: 'checking',
+                balance: 5000,
+                currency: 'USD',
+                accountNumber: '**** 4242',
+                id: Math.random().toString(36).substr(2, 9)
+              });
+            } catch (error) {
+              console.error("Error creating default account:", error);
+            }
           } else {
             setAccounts(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Account)));
           }
-        });
+        }, (error) => console.error("Accounts listener error:", error));
+        unsubscribes.push(unsubAccounts);
 
         // Listen for transactions
         const txQuery = query(
@@ -255,9 +273,10 @@ export default function App() {
           orderBy('date', 'desc'),
           limit(20)
         );
-        onSnapshot(txQuery, (snapshot) => {
+        const unsubTx = onSnapshot(txQuery, (snapshot) => {
           setTransactions(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Transaction)));
-        });
+        }, (error) => console.error("Transactions listener error:", error));
+        unsubscribes.push(unsubTx);
 
         // Listen for chat messages
         const chatQuery = query(
@@ -265,13 +284,14 @@ export default function App() {
           where('userId', '==', firebaseUser.uid),
           orderBy('timestamp', 'asc')
         );
-        onSnapshot(chatQuery, (snapshot) => {
+        const unsubChats = onSnapshot(chatQuery, (snapshot) => {
           setMessages(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as ChatMessage)));
-        });
+        }, (error) => console.error("Chats listener error:", error));
+        unsubscribes.push(unsubChats);
 
         // Listen for investments
         const investQuery = query(collection(db, 'investments'), where('userId', '==', firebaseUser.uid));
-        onSnapshot(investQuery, async (snapshot) => {
+        const unsubInvest = onSnapshot(investQuery, async (snapshot) => {
           if (snapshot.empty) {
             // Seed some initial investments for demo
             const seedInvestments = [
@@ -280,16 +300,21 @@ export default function App() {
               { symbol: 'VOO', name: 'Vanguard S&P 500 ETF', quantity: 25, costBasis: 380, currentPrice: 450, type: 'etf' }
             ];
             for (const inv of seedInvestments) {
-              await addDoc(collection(db, 'investments'), { ...inv, userId: firebaseUser.uid, id: Math.random().toString(36).substr(2, 9) });
+              try {
+                await addDoc(collection(db, 'investments'), { ...inv, userId: firebaseUser.uid, id: Math.random().toString(36).substr(2, 9) });
+              } catch (error) {
+                console.error("Error creating seed investment:", error);
+              }
             }
           } else {
             setInvestments(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Investment)));
           }
-        });
+        }, (error) => console.error("Investments listener error:", error));
+        unsubscribes.push(unsubInvest);
 
         // Listen for cards
         const cardQuery = query(collection(db, 'cards'), where('userId', '==', firebaseUser.uid));
-        onSnapshot(cardQuery, async (snapshot) => {
+        const unsubCards = onSnapshot(cardQuery, async (snapshot) => {
           if (snapshot.empty) {
             // Seed some initial cards for demo
             const seedCards = [
@@ -297,29 +322,34 @@ export default function App() {
               { type: 'credit', brand: 'Mastercard', last4: '8888', expiryDate: '08/25', status: 'active', limit: 10000, spent: 1240 }
             ];
             for (const card of seedCards) {
-              await addDoc(collection(db, 'cards'), { ...card, userId: firebaseUser.uid, id: Math.random().toString(36).substr(2, 9) });
+              try {
+                await addDoc(collection(db, 'cards'), { ...card, userId: firebaseUser.uid, id: Math.random().toString(36).substr(2, 9) });
+              } catch (error) {
+                console.error("Error creating seed card:", error);
+              }
             }
           } else {
             setCards(snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Card)));
           }
-        });
+        }, (error) => console.error("Cards listener error:", error));
+        unsubscribes.push(unsubCards);
 
         // Listen for connections
-        const unsubscribeConnections = connectionService.subscribeToConnections(firebaseUser.uid, (data) => {
+        const unsubConnections = connectionService.subscribeToConnections(firebaseUser.uid, (data) => {
           setConnections(data);
         });
+        unsubscribes.push(unsubConnections);
 
         setLoading(false);
-
-        return () => {
-          unsubscribeConnections();
-        };
       } else {
         setLoading(false);
       }
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubscribeAuth();
+      unsubscribes.forEach(unsub => unsub());
+    };
   }, []);
 
   useEffect(() => {
@@ -327,6 +357,15 @@ export default function App() {
       chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages]);
+
+  useEffect(() => {
+    if (currentView === 'ledgers') {
+      fetch('/api/modern_treasury/ledgers')
+        .then(res => res.json())
+        .then(data => setLedgers(data))
+        .catch(err => console.error(err));
+    }
+  }, [currentView]);
 
   const handleLogin = async () => {
     const provider = new GoogleAuthProvider();
@@ -503,6 +542,18 @@ export default function App() {
             active={currentView === 'connections'} 
             onClick={() => setCurrentView('connections')}
           />
+          <NavItem 
+            icon={<Wallet className="w-5 h-5" />} 
+            label="Ledgers" 
+            active={currentView === 'ledgers'} 
+            onClick={() => setCurrentView('ledgers')}
+          />
+          <NavItem 
+            icon={<LayoutDashboard className="w-5 h-5" />} 
+            label="Models" 
+            active={currentView === 'models'} 
+            onClick={() => setCurrentView('models')}
+          />
         </nav>
 
         <div className="mt-auto pt-6 border-t border-white/5">
@@ -528,6 +579,7 @@ export default function App() {
               {currentView === 'investments' && 'Investment Portfolio'}
               {currentView === 'advisor' && 'AI Financial Advisor'}
               {currentView === 'connections' && 'Service Connections'}
+              {currentView === 'models' && 'API Models'}
             </h2>
             <p className="text-zinc-500">
               {currentView === 'dashboard' && "Here's what's happening with your finances today."}
@@ -536,6 +588,7 @@ export default function App() {
               {currentView === 'investments' && "Track your assets and market performance."}
               {currentView === 'advisor' && "Get intelligent insights and personalized advice."}
               {currentView === 'connections' && "Connect third-party services like Stripe and Modern Treasury."}
+              {currentView === 'models' && "View all 2000+ available API models."}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -1044,6 +1097,67 @@ export default function App() {
                     </div>
                   ))
                 )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {currentView === 'ledgers' && (
+          <div className="bg-[#0D0D0D] border border-white/5 rounded-3xl p-8">
+            <h3 className="text-xl font-bold mb-6">Ledgers</h3>
+            <div className="space-y-4">
+              {ledgers.map((ledger: Ledger) => (
+                <div key={ledger.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
+                  <div>
+                    <h4 className="font-semibold">{ledger.name}</h4>
+                    <p className="text-xs text-zinc-500">{ledger.description}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-mono">{ledger.currency}</span>
+                  </div>
+                </div>
+              ))}
+              {ledgers.length === 0 && (
+                <div className="text-center py-12 text-zinc-500 border-2 border-dashed border-white/5 rounded-2xl">
+                  No ledgers found.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {currentView === 'models' && (
+          <div className="space-y-6">
+            <div className="bg-[#0D0D0D] border border-white/5 rounded-3xl p-6">
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-xl font-bold">All Models ({modelNames.length})</h3>
+              </div>
+              <div className="space-y-12">
+                {Object.entries(
+                  modelNames.reduce((acc, name) => {
+                    const firstLetter = name.charAt(0).toUpperCase();
+                    if (!acc[firstLetter]) acc[firstLetter] = [];
+                    acc[firstLetter].push(name);
+                    return acc;
+                  }, {} as Record<string, string[]>)
+                )
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([letter, models]) => (
+                  <div key={letter} className="space-y-4">
+                    <h4 className="text-2xl font-bold text-emerald-500 border-b border-white/10 pb-2">{letter}</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                      {models.map((modelName, index) => (
+                        <div key={index} className="bg-white/5 border border-white/10 rounded-2xl p-4 flex flex-col gap-2 hover:bg-white/10 transition-colors">
+                          <div className="w-8 h-8 bg-emerald-500/10 rounded-lg flex items-center justify-center text-emerald-500 mb-2">
+                            <LayoutDashboard className="w-4 h-4" />
+                          </div>
+                          <h4 className="font-semibold text-sm truncate" title={modelName}>{modelName}</h4>
+                          <p className="text-xs text-zinc-500">API Model</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>

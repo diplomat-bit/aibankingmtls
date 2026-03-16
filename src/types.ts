@@ -68,6 +68,60 @@ export interface UserConnection {
   externalAccountId?: string;
 }
 
+// FDX Money Movement Types
+export interface FdxPayee {
+  payeeId: string;
+  merchant: {
+    displayName: string;
+    name: {
+      company: string;
+    };
+    address?: {
+      line1: string;
+      city: string;
+      region: string;
+      postalCode: string;
+    };
+    phone?: {
+      type: string;
+      country: string;
+      number: string;
+    };
+  };
+  merchantAccountIds: string[];
+  status: 'ACTIVE' | 'DELETED' | 'PENDING' | 'REJECTED';
+  expiresTimestamp?: string;
+}
+
+export interface FdxPayment {
+  paymentId: string;
+  recurringPaymentId?: string;
+  fromAccountId: string;
+  toPayeeId: string;
+  amount: number;
+  merchantAccountId?: string;
+  dueDate: string;
+  processedTimestamp?: string;
+  startedProcessingTimestamp?: string;
+  status: 'CANCELLED' | 'FAILED' | 'NOFUNDS' | 'PROCESSED' | 'PROCESSING' | 'SCHEDULED';
+}
+
+export interface FdxRecurringPayment {
+  recurringPaymentId: string;
+  fromAccountId: string;
+  toPayeeId: string;
+  amount: number;
+  frequency: 'WEEKLY' | 'BIWEEKLY' | 'TWICEMONTHLY' | 'MONTHLY' | 'FOURWEEKS' | 'BIMONTHLY' | 'QUARTERLY' | 'SEMIANNUALLY' | 'ANNUALLY';
+  duration: {
+    type: 'NOEND' | 'NUMBEROFTIMES';
+    numberOfTimes?: number;
+  };
+  merchantAccountId?: string;
+  dueDate: string;
+  cancelledTimestamp?: string;
+  status: 'CANCELLED' | 'FAILED' | 'PROCESSED' | 'SCHEDULED';
+}
+
 export interface Ledger {
   id: string;
   name: string;

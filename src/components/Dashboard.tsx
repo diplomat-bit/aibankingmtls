@@ -1,7 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { LayoutDashboard, CreditCard, Landmark, Activity } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { auth } from '../firebase';
+import { ModernTreasuryApi } from '../../api/ModernTreasuryApi';
+
+const mtApi = new ModernTreasuryApi();
 
 interface Account {
   id: string;
@@ -16,13 +18,7 @@ export const Dashboard: React.FC = () => {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const token = await auth.currentUser?.getIdToken();
-        const response = await fetch('/api/modern_treasury/accounts', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        });
-        const data = await response.json();
+        const data = await mtApi.getAccounts();
         // Assuming data is an array of accounts, mapping to our interface
         if (Array.isArray(data)) {
           setAccounts(data.map((acc: any) => ({

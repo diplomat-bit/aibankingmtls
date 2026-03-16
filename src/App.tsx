@@ -56,6 +56,7 @@ import {
 import { Dashboard } from './components/Dashboard';
 import { ModelsView } from './components/ModelsView';
 import { ApisView } from './components/ApisView';
+import { FdxView } from './components/FdxView';
 import Web3View from './components/Web3View';
 import { 
   AreaChart, 
@@ -185,7 +186,7 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const [isAddingTransaction, setIsAddingTransaction] = useState(false);
   const [newTx, setNewTx] = useState({ amount: '', description: '', type: 'expense' });
-  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers' | 'apis' | 'web3'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers' | 'apis' | 'web3' | 'fdx'>('dashboard');
   const [mtPublishableKey, setMtPublishableKey] = useState<string>(localStorage.getItem('mt_publishable_key') || '');
 
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -593,6 +594,12 @@ export default function App() {
             active={currentView === 'web3'} 
             onClick={() => setCurrentView('web3')}
           />
+          <NavItem 
+            icon={<ArrowUpRight className="w-5 h-5" />} 
+            label="Money Movement" 
+            active={currentView === 'fdx'} 
+            onClick={() => setCurrentView('fdx')}
+          />
         </nav>
 
         <div className="mt-auto pt-6 border-t border-white/5">
@@ -621,6 +628,7 @@ export default function App() {
               {currentView === 'models' && 'API Models'}
               {currentView === 'apis' && 'API Endpoints'}
               {currentView === 'web3' && 'Web3 & Crypto'}
+              {currentView === 'fdx' && 'Money Movement (FDX)'}
             </h2>
             <p className="text-zinc-500">
               {currentView === 'dashboard' && "Here's what's happening with your finances today."}
@@ -632,6 +640,7 @@ export default function App() {
               {currentView === 'models' && "View all 2000+ available API models."}
               {currentView === 'apis' && "View all available API endpoints."}
               {currentView === 'web3' && "Manage your Web3 portfolio, swap, and bridge tokens."}
+              {currentView === 'fdx' && "Manage payees and payments using the FDX standard."}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -663,6 +672,10 @@ export default function App() {
 
         {currentView === 'web3' && (
           <Web3View />
+        )}
+
+        {currentView === 'fdx' && (
+          <FdxView />
         )}
 
         {currentView === 'dashboard' && (

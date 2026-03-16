@@ -757,6 +757,79 @@ async function startServer() {
     }
   });
 
+  // ============================================================================
+  // FDX Money Movement Implementation
+  // ============================================================================
+  
+  const mockPayees = [
+    {
+      payeeId: "payee-1",
+      merchant: {
+        displayName: "Verizon Wireless",
+        name: { company: "Verizon" },
+        address: { line1: "123 Main St", city: "New York", region: "NY", postalCode: "10001" },
+        phone: { type: "BUSINESS", country: "1", number: "8009220204" }
+      },
+      merchantAccountIds: ["88888"],
+      status: "ACTIVE"
+    },
+    {
+      payeeId: "payee-2",
+      merchant: {
+        displayName: "Con Edison",
+        name: { company: "ConEd" },
+        address: { line1: "4 Irving Pl", city: "New York", region: "NY", postalCode: "10003" }
+      },
+      merchantAccountIds: ["99999"],
+      status: "ACTIVE"
+    }
+  ];
+
+  const mockPayments = [
+    {
+      paymentId: "pmt-1",
+      fromAccountId: "acc-123",
+      toPayeeId: "payee-1",
+      amount: 125.50,
+      dueDate: "2026-04-01",
+      status: "SCHEDULED"
+    },
+    {
+      paymentId: "pmt-2",
+      fromAccountId: "acc-123",
+      toPayeeId: "payee-2",
+      amount: 85.20,
+      dueDate: "2026-03-20",
+      status: "PROCESSED",
+      processedTimestamp: "2026-03-15T10:00:00Z"
+    }
+  ];
+
+  const mockRecurringPayments = [
+    {
+      recurringPaymentId: "rec-1",
+      fromAccountId: "acc-123",
+      toPayeeId: "payee-1",
+      amount: 125.50,
+      frequency: "MONTHLY",
+      duration: { type: "NOEND" },
+      dueDate: "2026-04-01",
+      status: "SCHEDULED"
+    }
+  ];
+
+  app.get("/api/billmgmt/billpay/v2/fdx/v6/payees", (req, res) => {
+    res.json({ payees: mockPayees });
+  });
+
+  app.get("/api/billmgmt/billpay/v2/fdx/v6/payments", (req, res) => {
+    res.json({ payments: mockPayments });
+  });
+
+  app.get("/api/billmgmt/billpay/v2/fdx/v6/recurring-payments", (req, res) => {
+    res.json({ recurringPayments: mockRecurringPayments });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

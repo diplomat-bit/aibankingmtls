@@ -1,21 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Users, CreditCard, ArrowRightLeft, Plus, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
 import { ModernTreasuryFlow } from './ModernTreasuryFlow';
-import { auth } from '../firebase';
+import { ModernTreasuryApi, ModernTreasuryResource } from '../../api/ModernTreasuryApi';
 
-interface MTResource {
-  id: string;
-  [key: string]: any;
-}
+const mtApi = new ModernTreasuryApi();
 
 export const ApisView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'counterparties' | 'internal_accounts' | 'virtual_accounts' | 'flows'>('counterparties');
-  const [data, setData] = useState<MTResource[]>([]);
+  const [data, setData] = useState<ModernTreasuryResource[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [flowToken, setFlowToken] = useState<string | null>(null);
   const [flowType, setFlowType] = useState<'account_collection' | 'payment'>('account_collection');
-  const [flowCounterparties, setFlowCounterparties] = useState<MTResource[]>([]);
+  const [flowCounterparties, setFlowCounterparties] = useState<ModernTreasuryResource[]>([]);
   const [selectedCounterpartyId, setSelectedCounterpartyId] = useState<string>('');
 
   const publishableKey = localStorage.getItem('mt_publishable_key') || '';
@@ -24,14 +21,14 @@ export const ApisView: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      const response = await fetch(`/api/modern_treasury/${resource}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      if (!response.ok) throw new Error(`Failed to fetch ${resource}`);
-      const result = await response.json();
+      let result: ModernTreasuryResource[] = [];
+      if (resource === 'counterparties') {
+        result = await mtApi.getCounterparties();
+      } else if (resource === 'internal_accounts') {
+        result = await mtApi.getInternalAccounts();
+      } else if (resource === 'virtual_accounts') {
+        result = await mtApi.getVirtualAccounts();
+      }
       setData(result);
     } catch (err: any) {
       setError(err.message);
@@ -42,16 +39,10 @@ export const ApisView: React.FC = () => {
 
   const fetchCounterpartiesForFlow = async () => {
     try {
-      const token = await auth.currentUser?.getIdToken();
-      const response = await fetch('/api/modern_treasury/counterparties', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (response.ok) {
-        const result = await response.json();
-        setFlowCounterparties(result);
-        if (result.length > 0) {
-          setSelectedCounterpartyId(result[0].id);
-        }
+      const result = await mtApi.getCounterparties();
+      setFlowCounterparties(result);
+      if (result.length > 0) {
+        setSelectedCounterpartyId(result[0].id);
       }
     } catch (err) {
       console.error("Failed to fetch counterparties for flow", err);
@@ -75,48 +66,26 @@ export const ApisView: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const token = await auth.currentUser?.getIdToken();
-      
-      const endpoint = flowType === 'account_collection' 
-        ? '/api/modern_treasury/account_collection_flows'
-        : '/api/modern_treasury/payment_flows';
-      
-      const body = flowType === 'account_collection' 
-        ? {
-            counterparty_id: selectedCounterpartyId,
-            payment_types: ['ach', 'wire', 'check'],
-            receiving_countries: ['USA']
-          }
-        : {
-            counterparty_id: selectedCounterpartyId,
-            amount: 1000,
-            currency: 'USD',
-            direction: 'debit',
-            originating_account_id: await (async () => {
-              const accRes = await fetch('/api/modern_treasury/internal_accounts', {
-                headers: { 'Authorization': `Bearer ${token}` }
-              });
-              if (!accRes.ok) throw new Error('Failed to fetch internal accounts');
-              const accounts = await accRes.json();
-              if (!accounts[0]?.id) throw new Error('No internal accounts found');
-              return accounts[0].id;
-            })()
-          };
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify(body)
-      });
-
-      if (!response.ok) {
-        const errData = await response.json();
-        throw new Error(errData.error || 'Failed to create flow');
+      let result;
+      if (flowType === 'account_collection') {
+        result = await mtApi.createAccountCollectionFlow({
+          counterparty_id: selectedCounterpartyId,
+          payment_types: ['ach', 'wire', 'check'],
+          receiving_countries: ['USA']
+        });
+      } else {
+        const accounts = await mtApi.getInternalAccounts();
+        if (!accounts[0]?.id) throw new Error('No internal accounts found');
+        
+        result = await mtApi.createPaymentFlow({
+          counterparty_id: selectedCounterpartyId,
+          amount: 1000,
+          currency: 'USD',
+          direction: 'debit',
+          originating_account_id: accounts[0].id
+        });
       }
-      const result = await response.json();
+
       setFlowToken(result.client_token);
     } catch (err: any) {
       setError(err.message);

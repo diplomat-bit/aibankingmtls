@@ -8,17 +8,21 @@
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit",
-     "vercel-build": "npm run build"
+    "lint": "tsc --noEmit"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
+    "@lifi/widget": "^3.40.12",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@modern-treasury/modern-treasury-js": "^0.0.10",
     "@tailwindcss/vite": "^4.1.14",
+    "@tanstack/react-query": "^5.90.21",
     "@vitejs/plugin-react": "^5.0.4",
     "axios": "^1.13.6",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
+    "ethers": "^6.16.0",
     "express": "^4.21.2",
     "express-oauth2-jwt-bearer": "^1.7.4",
     "firebase": "^12.10.0",
@@ -26,11 +30,13 @@
     "lucide-react": "^0.546.0",
     "modern-treasury": "^4.8.0",
     "motion": "^12.23.24",
+    "plaid": "^41.4.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^3.8.0",
     "stripe": "^20.4.1",
     "tailwind-merge": "^3.5.0",
+    "viem": "^2.47.4",
     "vite": "^6.2.0"
   },
   "devDependencies": {

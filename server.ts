@@ -10,6 +10,8 @@ import https from "https";
 import { ensureCertsExist } from "./scripts/generate-certs.js";
 import admin from "firebase-admin";
 import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
+import { plaidService } from "./src/services/plaidService.js";
+import { blockchainService } from "./src/services/blockchainService.js";
 
 dotenv.config();
 
@@ -48,6 +50,61 @@ async function startServer() {
   const { cert, key } = ensureCertsExist();
   const httpsAgent = new https.Agent({ cert, key });
 
+  // Webhooks
+  app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+    const sig = req.headers['stripe-signature'];
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    if (!endpointSecret) {
+      return res.status(400).send('Webhook secret not configured');
+    }
+
+    try {
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2026-02-25.clover' });
+      const event = stripe.webhooks.constructEvent(req.body, sig!, endpointSecret);
+      
+      console.log('Stripe webhook received:', event.type);
+      // Handle the event
+      switch (event.type) {
+        case 'payment_intent.succeeded':
+          const paymentIntent = event.data.object;
+          console.log('PaymentIntent was successful!');
+          break;
+        default:
+          console.log(`Unhandled event type ${event.type}`);
+      }
+
+      res.json({ received: true });
+    } catch (err: any) {
+      console.error('Stripe Webhook Error:', err.message);
+      res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+  });
+
+  app.post('/api/webhooks/modern-treasury', express.json(), async (req, res) => {
+    try {
+      const event = req.body;
+      console.log('Modern Treasury webhook received:', event.event);
+      
+      // Handle the event
+      switch (event.event) {
+        case 'payment_order.completed':
+          console.log('Payment Order completed!');
+          break;
+        case 'expected_payment.reconciled':
+          console.log('Expected Payment reconciled!');
+          break;
+        default:
+          console.log(`Unhandled MT event type ${event.event}`);
+      }
+
+      res.json({ received: true });
+    } catch (err: any) {
+      console.error('Modern Treasury Webhook Error:', err.message);
+      res.status(400).send(`Webhook Error: ${err.message}`);
+    }
+  });
+
   app.use(express.json());
 
   // Protect API routes with Firebase Auth
@@ -58,22 +115,115 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  // Stripe API Integration
-  app.get("/api/stripe/balance", async (req, res) => {
+  let persistedQueries: Record<string, string> = {};
+
+  app.post("/api/graphql/upload-queries", async (req, res) => {
     try {
-      const { stripeAccountId } = req.query;
-      if (!process.env.STRIPE_SECRET_KEY) {
-        return res.status(500).json({ error: "Stripe secret key not configured" });
+      const { operations } = req.body;
+      if (Array.isArray(operations)) {
+        operations.forEach((op: any) => {
+          if (op.id && op.body) {
+            persistedQueries[op.id] = op.body;
+          }
+        });
+        res.json({ success: true, count: operations.length });
+      } else {
+        res.status(400).json({ error: "Invalid format. Expected 'operations' array." });
       }
-      
-      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY, { apiVersion: '2026-02-25.clover' });
-      const balance = await stripe.balance.retrieve(
-        stripeAccountId ? { stripeAccount: stripeAccountId as string } : undefined
-      );
-      res.json(balance);
     } catch (error) {
-      console.error("Stripe API Error:", error);
       res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/graphql", async (req, res) => {
+    try {
+      const { query, operationName, variables, extensions } = req.body;
+      let graphqlQuery = query;
+
+      if (!graphqlQuery && extensions?.persistedQuery?.sha256Hash) {
+        const hash = extensions.persistedQuery.sha256Hash;
+        graphqlQuery = persistedQueries[hash];
+        if (!graphqlQuery) {
+          return res.status(400).json({ errors: [{ message: "PersistedQueryNotFound" }] });
+        }
+      }
+
+      if (!graphqlQuery) {
+        return res.status(400).json({ error: "Query is required" });
+      }
+
+      // Here you would typically forward the query to your actual GraphQL server
+      // For now, we'll just mock a successful response or forward it to Modern Treasury if it's an MT query
+      console.log(`Executing GraphQL operation: ${operationName || 'Anonymous'}`);
+      
+      // Mock response
+      res.json({
+        data: {
+          message: `Successfully executed ${operationName || 'query'}`,
+          query: graphqlQuery.substring(0, 100) + '...',
+          variables
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // Plaid API Integration
+  app.post("/api/plaid/create-link-token", async (req, res) => {
+    try {
+      const { userId } = req.body;
+      const response = await plaidService.createLinkToken(userId);
+      res.json(response);
+    } catch (error) {
+      console.error("Plaid Link Token Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/plaid/exchange-public-token", async (req, res) => {
+    try {
+      const { publicToken } = req.body;
+      const response = await plaidService.exchangePublicToken(publicToken);
+      res.json(response);
+    } catch (error) {
+      console.error("Plaid Exchange Token Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/plaid/create-processor-token", async (req, res) => {
+    try {
+      const { accessToken, accountId } = req.body;
+      const response = await plaidService.createProcessorToken(accessToken, accountId, 'modern_treasury');
+      res.json(response);
+    } catch (error) {
+      console.error("Plaid Processor Token Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // Bridging API
+  app.post("/api/bridge/token", async (req, res) => {
+    try {
+      const { uuid, amount, destinationChain } = req.body;
+      const tx = await blockchainService.bridgeToken(uuid, amount, destinationChain);
+      res.json({ success: true, tx });
+    } catch (error) {
+      console.error("Bridging Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // Plaid Webhook
+  app.post('/api/webhooks/plaid', express.json(), async (req, res) => {
+    try {
+      const event = req.body;
+      console.log('Plaid webhook received:', event.webhook_type);
+      res.json({ received: true });
+    } catch (err: any) {
+      console.error('Plaid Webhook Error:', err.message);
+      res.status(400).send(`Webhook Error: ${err.message}`);
     }
   });
 
@@ -90,9 +240,100 @@ async function startServer() {
       });
       
       const accounts = await mt.internalAccounts.list();
-      res.json(accounts);
+      res.json(accounts.items);
     } catch (error) {
       console.error("Modern Treasury API Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/modern_treasury/counterparties", async (req, res) => {
+    try {
+      const mt = new ModernTreasury({
+        apiKey: process.env.MODERN_TREASURY_API_KEY!,
+        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
+      });
+      const counterparties = await mt.counterparties.list({ per_page: 25 });
+      res.json(counterparties.items);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/modern_treasury/internal_accounts", async (req, res) => {
+    try {
+      const mt = new ModernTreasury({
+        apiKey: process.env.MODERN_TREASURY_API_KEY!,
+        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
+      });
+      const accounts = await mt.internalAccounts.list({ per_page: 25 });
+      res.json(accounts.items);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/modern_treasury/virtual_accounts", async (req, res) => {
+    try {
+      const mt = new ModernTreasury({
+        apiKey: process.env.MODERN_TREASURY_API_KEY!,
+        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
+      });
+      const accounts = await mt.virtualAccounts.list({ per_page: 25 });
+      res.json(accounts.items);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/modern_treasury/transactions", async (req, res) => {
+    try {
+      const mt = new ModernTreasury({
+        apiKey: process.env.MODERN_TREASURY_API_KEY!,
+        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
+      });
+      const transactions = await mt.transactions.list({ per_page: 25 });
+      res.json(transactions.items);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/modern_treasury/ledger_accounts", async (req, res) => {
+    try {
+      const mt = new ModernTreasury({
+        apiKey: process.env.MODERN_TREASURY_API_KEY!,
+        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
+      });
+      const accounts = await mt.ledgerAccounts.list({ per_page: 25 });
+      res.json(accounts.items);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/modern_treasury/account_collection_flows", async (req, res) => {
+    try {
+      const mt = new ModernTreasury({
+        apiKey: process.env.MODERN_TREASURY_API_KEY!,
+        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
+      });
+      const flow = await mt.accountCollectionFlows.create(req.body);
+      res.json(flow);
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/modern_treasury/payment_flows", async (req, res) => {
+    try {
+      const mt = new ModernTreasury({
+        apiKey: process.env.MODERN_TREASURY_API_KEY!,
+        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
+      });
+      const flow = await mt.paymentFlows.create(req.body);
+      res.json(flow);
+    } catch (error) {
       res.status(500).json({ error: String(error) });
     }
   });
@@ -110,7 +351,7 @@ async function startServer() {
       });
       
       const ledgers = await mt.ledgers.list();
-      res.json(ledgers);
+      res.json(ledgers.items);
     } catch (error) {
       console.error("Modern Treasury Ledger API Error:", error);
       res.status(500).json({ error: String(error) });
@@ -135,16 +376,6 @@ async function startServer() {
       return res.redirect(`https://connect.stripe.com/oauth/authorize?${params}`);
     }
 
-    if (service === 'modern_treasury') {
-      const params = new URLSearchParams({
-        response_type: 'code',
-        client_id: process.env.MODERN_TREASURY_CLIENT_ID!,
-        redirect_uri: redirectUri,
-        state: JSON.stringify({ service, userId })
-      });
-      return res.redirect(`https://app.moderntreasury.com/oauth/authorize?${params}`);
-    }
-
     if (service === 'citi') {
       const params = new URLSearchParams({
         response_type: 'code',
@@ -157,16 +388,23 @@ async function startServer() {
     }
 
     if (service === 'aibanking') {
+      const keyId = process.env.AIBANKING_KEY_ID;
       try {
+        const parParams = new URLSearchParams({
+          response_type: 'code',
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          scope: 'openid profile email offline_access',
+          audience: 'https://auth.aibanking.dev/userinfo',
+          state: JSON.stringify({ service, userId })
+        });
+
+        if (keyId) {
+          parParams.append('key_id', keyId);
+        }
+
         const parResponse = await axios.post('https://auth.aibanking.dev/oauth/par', 
-          new URLSearchParams({
-            response_type: 'code',
-            client_id: clientId,
-            redirect_uri: redirectUri,
-            scope: 'openid profile email offline_access',
-            audience: 'https://auth.aibanking.dev/userinfo',
-            state: JSON.stringify({ service, userId })
-          }),
+          parParams,
           {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             httpsAgent
@@ -204,30 +442,38 @@ async function startServer() {
       return res.json({ url: `https://connect.stripe.com/oauth/authorize?${params}` });
     }
 
-    if (service === 'modern_treasury') {
+    if (service === 'citi') {
       const params = new URLSearchParams({
         response_type: 'code',
-        client_id: process.env.MODERN_TREASURY_CLIENT_ID!,
+        client_id: process.env.CITI_CLIENT_ID!,
         redirect_uri: redirectUri,
+        scope: 'accounts_details_transactions accounts_routing_number customers_profiles accounts_statements accounts_tax_statements',
         state: JSON.stringify({ service, userId })
       });
-      return res.json({ url: `https://app.moderntreasury.com/oauth/authorize?${params}` });
+      return res.json({ url: `https://api.citi.com/api/identity/auth/v1/oauth2/authorize?${params}` });
     }
 
     if (service === 'aibanking') {
       const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
+      const keyId = process.env.AIBANKING_KEY_ID;
       
       try {
+        const parParams = new URLSearchParams({
+          response_type: 'code',
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          scope: 'openid profile email offline_access',
+          audience: 'https://auth.aibanking.dev/userinfo',
+          state: JSON.stringify({ service, userId })
+        });
+
+        if (keyId) {
+          parParams.append('key_id', keyId);
+        }
+
         // Pushed Authorization Request (PAR) with mTLS
         const parResponse = await axios.post('https://aibanking.us.auth0.com/oauth/par', 
-          new URLSearchParams({
-            response_type: 'code',
-            client_id: clientId,
-            redirect_uri: redirectUri,
-            scope: 'openid profile email offline_access',
-            audience: 'https://auth.aibanking.dev/userinfo',
-            state: JSON.stringify({ service, userId })
-          }),
+          parParams,
           {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             httpsAgent
@@ -303,25 +549,6 @@ async function startServer() {
         } else {
           console.error('Stripe Token Exchange Failed:', await tokenResponse.text());
         }
-      } else if (service === 'modern_treasury') {
-        const tokenResponse = await fetch('https://app.moderntreasury.com/oauth/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            grant_type: 'authorization_code',
-            client_id: process.env.MODERN_TREASURY_CLIENT_ID,
-            client_secret: process.env.MODERN_TREASURY_CLIENT_SECRET,
-            code: code,
-            redirect_uri: redirectUri
-          })
-        });
-        if (tokenResponse.ok) {
-          const data = await tokenResponse.json();
-          accessToken = data.access_token;
-          refreshToken = data.refresh_token || refreshToken;
-        } else {
-          console.error('Modern Treasury Token Exchange Failed:', await tokenResponse.text());
-        }
       } else if (service === 'citi') {
         const tokenResponse = await axios.post('https://api.citi.com/api/identity/auth/v1/oauth2/token/us/gcb',
           new URLSearchParams({
@@ -341,15 +568,21 @@ async function startServer() {
         refreshToken = data.refresh_token;
       } else if (service === 'aibanking') {
         try {
+          const tokenParams: any = {
+            grant_type: 'authorization_code',
+            client_id: process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY',
+            code: code,
+            redirect_uri: redirectUri
+          };
+
+          if (process.env.AIBANKING_KEY_ID) {
+            tokenParams.key_id = process.env.AIBANKING_KEY_ID;
+          }
+
           const tokenResponse = await axios.post('https://auth.aibanking.dev/oauth/token', 
+            new URLSearchParams(tokenParams),
             {
-              grant_type: 'authorization_code',
-              client_id: process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY',
-              code: code,
-              redirect_uri: redirectUri
-            },
-            {
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
               httpsAgent
             }
           );

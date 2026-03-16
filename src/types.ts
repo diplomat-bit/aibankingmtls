@@ -60,7 +60,7 @@ export interface Card {
 export interface UserConnection {
   id?: string;
   userId: string;
-  service: 'stripe' | 'modern_treasury' | 'aibanking';
+  service: 'stripe' | 'modern_treasury' | 'aibanking' | 'citi';
   accessToken: string;
   refreshToken?: string;
   expiresAt?: number;
@@ -73,4 +73,12 @@ export interface Ledger {
   name: string;
   description: string;
   currency: string;
+}
+
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      'appkit-button': any;
+    }
+  }
 }

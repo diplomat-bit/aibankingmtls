@@ -1,0 +1,200 @@
+swagger: "2.0"
+info:
+  description: " APIs will be used by Citi Partners to authenticate and generate OAuth\
+    \ Access Token to consume protected apis used for app registration, update, retrieve\
+    \ and revoke the same \""
+  version: 1.0.0
+  title: Dynamic Client Registration Authorization
+basePath: /api/dcr/v1/authorize
+paths:
+  /token:
+    post:
+      tags:
+      - authorizationTokenRequest
+      summary: DCR-Authorization
+      description: This Api used to autheticate partner and generate OAuth Access
+        Token
+      operationId: authenPartner
+      parameters:
+      - name: Authorization
+        in: header
+        description: Base 64 encoded value of client_id and client_secret
+        required: true
+        type: string
+      - name: Content-Type
+        in: header
+        description: Content types that are acceptable for the request. Currently
+          this operation only supports application/x-www-form-urlencoded
+        required: true
+        type: string
+        default: application/x-www-form-urlencoded
+      - name: uuid
+        in: header
+        description: 128 bit random UUID generated uniquely for every request
+        required: true
+        type: string
+        default: 4468adf1-adfe-4f85-a2c1-f29beaa1f6ee
+      - in: body
+        name: Body
+        required: true
+        schema:
+          originalRef: '#/definitions/ClientAuthenRequest'
+          $ref: '#/definitions/ClientAuthenRequest'
+      responses:
+        "200":
+          description: Successful operation.
+          responseSchema:
+            originalRef: '#/definitions/ClientAuthenResponse'
+            $ref: '#/definitions/ClientAuthenResponse'
+          schema:
+            originalRef: '#/definitions/ClientAuthenResponse'
+            $ref: '#/definitions/ClientAuthenResponse'
+        "400":
+          description: <table class="table"><tr><td>Type</td><td>error details</td><td>Details</td></tr><tr><td>error</td><td>missing
+            mandatory parameters</td><td></tr></table>
+          responseSchema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+          schema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+        "401":
+          description: <table class="table"><tr><td>Type</td><td>Code</td><td>Details</td></tr><tr><td>error</td><td>unAuthorized</td><td>Authorization
+            credentials are invalid</td></tr></table>
+          responseSchema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+          schema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: <table class="table"><tr><td>Type</td><td>Code</td><td>Details</td><td>More
+            Info</td></tr><tr><td>error</td><td>accessNotConfigured</td><td>The requested
+            operation is not configured to access this resource</td><td>Channel/Country/Business
+            provided in the request is not currently supported</td></tr></table>
+          responseSchema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+          schema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: <table class="table"><tr><td>Type</td><td>Code</td><td>Details</td></tr><tr><td>error</td><td>resourceNotFound</td><td>The
+            requested resource was not found</td></tr></table>
+          responseSchema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+          schema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+        "500":
+          description: <table class="table"><tr><td>Type</td><td>Code</td><td>Details</td></tr><tr><td>fatal</td><td>serverUnavailable</td><td>The
+            request failed due to an internal error/server unavailability</td></tr></table>
+          responseSchema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+          schema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+      responsesObject:
+        "200":
+          description: Successful operation.
+          responseSchema:
+            originalRef: '#/definitions/ClientAuthenResponse'
+            $ref: '#/definitions/ClientAuthenResponse'
+          schema:
+            originalRef: '#/definitions/ClientAuthenResponse'
+            $ref: '#/definitions/ClientAuthenResponse'
+        "400":
+          description: <table class="table"><tr><td>Type</td><td>error details</td><td>Details</td></tr><tr><td>error</td><td>missing
+            mandatory parameters</td><td></tr></table>
+          responseSchema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+          schema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+        "401":
+          description: <table class="table"><tr><td>Type</td><td>Code</td><td>Details</td></tr><tr><td>error</td><td>unAuthorized</td><td>Authorization
+            credentials are invalid</td></tr></table>
+          responseSchema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+          schema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+        "403":
+          description: <table class="table"><tr><td>Type</td><td>Code</td><td>Details</td><td>More
+            Info</td></tr><tr><td>error</td><td>accessNotConfigured</td><td>The requested
+            operation is not configured to access this resource</td><td>Channel/Country/Business
+            provided in the request is not currently supported</td></tr></table>
+          responseSchema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+          schema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+        "404":
+          description: <table class="table"><tr><td>Type</td><td>Code</td><td>Details</td></tr><tr><td>error</td><td>resourceNotFound</td><td>The
+            requested resource was not found</td></tr></table>
+          responseSchema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+          schema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+        "500":
+          description: <table class="table"><tr><td>Type</td><td>Code</td><td>Details</td></tr><tr><td>fatal</td><td>serverUnavailable</td><td>The
+            request failed due to an internal error/server unavailability</td></tr></table>
+          responseSchema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+          schema:
+            originalRef: '#/definitions/ErrorResponse'
+            $ref: '#/definitions/ErrorResponse'
+definitions:
+  ClientAuthenRequest:
+    required:
+    - grant_type
+    - scope
+    properties:
+      grant_type:
+        type: string
+        description: Name of the OAuth Grant Type requested
+        default: client_credentials
+      scope:
+        type: string
+        description: Scope binded to the OAuth Access Token generated by IDP
+        default: app_registration
+  ClientAuthenResponse:
+    properties:
+      token_type:
+        type: string
+        description: Token Type is Bearer
+        default: Bearer
+      access_token:
+        type: string
+        description: OAuth Access Token value of atleast 256 length
+      expires_in:
+        type: integer
+        description: token validity  in seconds
+      scope:
+        type: string
+        description: Scope value of the OAuth Access Token
+        default: app_registration
+  ErrorResponse:
+    type: object
+    required:
+    - code
+    - type
+    properties:
+      code:
+        type: integer
+        description: Error code
+      details:
+        type: string
+        description: Verbose explanation of the error
+      type:
+        type: string
+        description: error type
+        default: error

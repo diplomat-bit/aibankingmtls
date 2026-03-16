@@ -53,28 +53,33 @@ export const Dashboard: React.FC = () => {
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {accounts.map(account => (
-          <div key={account.id} className="bg-white p-6 rounded-xl shadow-md border border-zinc-200">
+          <div key={account.id} className="bg-[#0D0D0D] p-6 rounded-3xl border border-white/5 shadow-xl">
             <div className="flex items-center gap-3 mb-4">
-              <Landmark className="text-indigo-600" />
-              <h2 className="font-semibold">{account.name}</h2>
+              <div className="w-10 h-10 bg-emerald-500/10 rounded-xl flex items-center justify-center text-emerald-500">
+                <Landmark className="w-5 h-5" />
+              </div>
+              <h2 className="font-semibold text-white">{account.name}</h2>
             </div>
-            <p className="text-3xl font-bold">${(account.balance / 100).toFixed(2)}</p>
+            <p className="text-3xl font-bold text-white">${(account.balance / 100).toFixed(2)}</p>
           </div>
         ))}
       </div>
 
-      <div className="bg-white p-6 rounded-xl shadow-md border border-zinc-200">
-        <h2 className="text-xl font-semibold mb-4 flex items-center gap-2">
-            <Activity /> Account Balances
+      <div className="bg-[#0D0D0D] p-6 rounded-3xl border border-white/5 shadow-xl">
+        <h2 className="text-xl font-semibold mb-6 flex items-center gap-2 text-white">
+            <Activity className="text-emerald-500" /> MT Account Balances
         </h2>
         <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={accounts}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="balance" fill="#4f46e5" />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
+                    <XAxis dataKey="name" stroke="#52525b" fontSize={12} tickLine={false} axisLine={false} />
+                    <YAxis stroke="#52525b" fontSize={12} tickLine={false} axisLine={false} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: '#18181b', border: 'none', borderRadius: '12px' }}
+                      itemStyle={{ color: '#10b981' }}
+                    />
+                    <Bar dataKey="balance" fill="#10b981" radius={[4, 4, 0, 0]} />
                 </BarChart>
             </ResponsiveContainer>
         </div>

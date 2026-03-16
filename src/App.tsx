@@ -56,6 +56,7 @@ import {
 import { Dashboard } from './components/Dashboard';
 import { ModelsView } from './components/ModelsView';
 import { ApisView } from './components/ApisView';
+import Web3View from './components/Web3View';
 import { 
   AreaChart, 
   Area, 
@@ -184,7 +185,8 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const [isAddingTransaction, setIsAddingTransaction] = useState(false);
   const [newTx, setNewTx] = useState({ amount: '', description: '', type: 'expense' });
-  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers' | 'apis'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers' | 'apis' | 'web3'>('dashboard');
+  const [mtPublishableKey, setMtPublishableKey] = useState<string>(localStorage.getItem('mt_publishable_key') || '');
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -392,21 +394,32 @@ export default function App() {
 
   const handleLogout = () => signOut(auth);
 
-  const handleConnectService = (service: 'stripe' | 'modern_treasury' | 'aibanking') => {
+  const handleConnectService = async (service: 'stripe' | 'modern_treasury' | 'aibanking' | 'citi') => {
     if (!user) return;
     
-    const width = 600;
-    const height = 700;
-    const left = window.screenX + (window.outerWidth - width) / 2;
-    const top = window.screenY + (window.outerHeight - height) / 2;
-    
-    const url = `/api/auth/login?service=${service}&userId=${user.uid}`;
-    
-    window.open(
-      url,
-      'oauth_popup',
-      `width=${width},height=${height},left=${left},top=${top}`
-    );
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/auth/url?service=${service}&userId=${user.uid}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      if (!response.ok) throw new Error('Failed to get auth URL');
+      const { url } = await response.json();
+
+      const width = 600;
+      const height = 700;
+      const left = window.screenX + (window.outerWidth - width) / 2;
+      const top = window.screenY + (window.outerHeight - height) / 2;
+      
+      window.open(
+        url,
+        'oauth_popup',
+        `width=${width},height=${height},left=${left},top=${top}`
+      );
+    } catch (err) {
+      console.error('OAuth error:', err);
+    }
   };
 
   const handleAddTransaction = async (e: React.FormEvent) => {
@@ -574,6 +587,12 @@ export default function App() {
             active={currentView === 'apis'} 
             onClick={() => setCurrentView('apis')}
           />
+          <NavItem 
+            icon={<Wallet className="w-5 h-5" />} 
+            label="Web3" 
+            active={currentView === 'web3'} 
+            onClick={() => setCurrentView('web3')}
+          />
         </nav>
 
         <div className="mt-auto pt-6 border-t border-white/5">
@@ -601,6 +620,7 @@ export default function App() {
               {currentView === 'connections' && 'Service Connections'}
               {currentView === 'models' && 'API Models'}
               {currentView === 'apis' && 'API Endpoints'}
+              {currentView === 'web3' && 'Web3 & Crypto'}
             </h2>
             <p className="text-zinc-500">
               {currentView === 'dashboard' && "Here's what's happening with your finances today."}
@@ -611,6 +631,7 @@ export default function App() {
               {currentView === 'connections' && "Connect third-party services like Stripe and Modern Treasury."}
               {currentView === 'models' && "View all 2000+ available API models."}
               {currentView === 'apis' && "View all available API endpoints."}
+              {currentView === 'web3' && "Manage your Web3 portfolio, swap, and bridge tokens."}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -632,16 +653,16 @@ export default function App() {
           </div>
         </header>
 
-        {currentView === 'dashboard' && (
-          <Dashboard />
-        )}
-        
         {currentView === 'models' && (
           <ModelsView />
         )}
 
         {currentView === 'apis' && (
           <ApisView />
+        )}
+
+        {currentView === 'web3' && (
+          <Web3View />
         )}
 
         {currentView === 'dashboard' && (
@@ -959,7 +980,7 @@ export default function App() {
 
         {currentView === 'connections' && (
           <div className="space-y-8">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
               {/* Stripe Connection */}
               <div className="bg-[#0D0D0D] border border-white/5 rounded-3xl p-8 flex flex-col justify-between">
                 <div>
@@ -969,11 +990,11 @@ export default function App() {
                     </div>
                     <div>
                       <h3 className="text-xl font-bold">Stripe</h3>
-                      <p className="text-zinc-500 text-sm">Payment processing & financial data</p>
+                      <p className="text-zinc-500 text-sm">Payments</p>
                     </div>
                   </div>
                   <p className="text-zinc-400 text-sm mb-8 leading-relaxed">
-                    Connect your Stripe account to sync transactions, payouts, and customer data directly into your Aura dashboard.
+                    Connect your Stripe account to sync transactions and payouts.
                   </p>
                 </div>
                 
@@ -991,10 +1012,6 @@ export default function App() {
                         <Trash2 className="w-5 h-5" />
                       </button>
                     </div>
-                    <button className="w-full py-4 bg-white/5 border border-white/10 rounded-2xl font-semibold hover:bg-white/10 transition-all flex items-center justify-center gap-2">
-                      <RefreshCw className="w-4 h-4" />
-                      Sync Data
-                    </button>
                   </div>
                 ) : (
                   <button 
@@ -1016,15 +1033,53 @@ export default function App() {
                     </div>
                     <div>
                       <h3 className="text-xl font-bold">Modern Treasury</h3>
-                      <p className="text-zinc-500 text-sm">Payment operations & treasury management</p>
+                      <p className="text-zinc-500 text-sm">Treasury</p>
+                    </div>
+                  </div>
+                  <p className="text-zinc-400 text-sm mb-4 leading-relaxed">
+                    Configure your API Key and Org ID in environment variables.
+                  </p>
+                  <div className="mb-6">
+                    <label className="text-[10px] uppercase font-bold text-zinc-500 mb-2 block">Publishable Key</label>
+                    <input 
+                      type="password"
+                      value={mtPublishableKey}
+                      onChange={(e) => {
+                        setMtPublishableKey(e.target.value);
+                        localStorage.setItem('mt_publishable_key', e.target.value);
+                      }}
+                      placeholder="pk_live_..."
+                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-emerald-500/50"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl">
+                  <div className="flex items-center gap-3">
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
+                    <span className="text-emerald-500 font-semibold text-sm">Ready for Flows</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Citi Connection */}
+              <div className="bg-[#0D0D0D] border border-white/5 rounded-3xl p-8 flex flex-col justify-between">
+                <div>
+                  <div className="flex items-center gap-4 mb-6">
+                    <div className="w-12 h-12 bg-blue-600/10 rounded-2xl flex items-center justify-center text-blue-600">
+                      <Globe className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold">Citi</h3>
+                      <p className="text-zinc-500 text-sm">Banking</p>
                     </div>
                   </div>
                   <p className="text-zinc-400 text-sm mb-8 leading-relaxed">
-                    Integrate Modern Treasury to automate your money movement and gain real-time visibility into your bank accounts.
+                    Connect your Citi accounts to sync balances and statements.
                   </p>
                 </div>
-
-                {connections.find(c => c.service === 'modern_treasury') ? (
+                
+                {connections.find(c => c.service === 'citi') ? (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl">
                       <div className="flex items-center gap-3">
@@ -1032,24 +1087,20 @@ export default function App() {
                         <span className="text-emerald-500 font-semibold text-sm">Connected</span>
                       </div>
                       <button 
-                        onClick={() => connectionService.removeConnection('modern_treasury')}
+                        onClick={() => connectionService.removeConnection('citi')}
                         className="text-zinc-500 hover:text-rose-500 transition-colors"
                       >
                         <Trash2 className="w-5 h-5" />
                       </button>
                     </div>
-                    <button className="w-full py-4 bg-white/5 border border-white/10 rounded-2xl font-semibold hover:bg-white/10 transition-all flex items-center justify-center gap-2">
-                      <RefreshCw className="w-4 h-4" />
-                      Sync Data
-                    </button>
                   </div>
                 ) : (
                   <button 
-                    onClick={() => handleConnectService('modern_treasury')}
-                    className="w-full py-4 bg-blue-500 text-white font-bold rounded-2xl hover:bg-blue-500/90 transition-all flex items-center justify-center gap-2"
+                    onClick={() => handleConnectService('citi')}
+                    className="w-full py-4 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-600/90 transition-all flex items-center justify-center gap-2"
                   >
                     <ExternalLink className="w-4 h-4" />
-                    Connect Modern Treasury
+                    Connect Citi
                   </button>
                 )}
               </div>
@@ -1063,12 +1114,17 @@ export default function App() {
                     </div>
                     <div>
                       <h3 className="text-xl font-bold">AI Banking</h3>
-                      <p className="text-zinc-500 text-sm">Unified banking & AI insights</p>
+                      <p className="text-zinc-500 text-sm">Unified</p>
                     </div>
                   </div>
-                  <p className="text-zinc-400 text-sm mb-8 leading-relaxed">
-                    Connect to the AI Banking infrastructure to enable advanced automated banking features and unified financial reporting.
+                  <p className="text-zinc-400 text-sm mb-4 leading-relaxed">
+                    Uses mTLS certificates and a Key ID from your CA.
                   </p>
+                  <div className="bg-white/5 rounded-xl p-4 mb-6 border border-white/10">
+                    <p className="text-[10px] text-zinc-500 leading-relaxed">
+                      <span className="text-emerald-500 font-bold">Setup:</span> Add your <code className="text-white">AIBANKING_KEY_ID</code> and <code className="text-white">AIBANKING_PRIVATE_KEY</code> to environment variables. Ensure certificates are generated in <code className="text-white">/certs</code>.
+                    </p>
+                  </div>
                 </div>
 
                 {connections.find(c => c.service === 'aibanking') ? (
@@ -1085,10 +1141,6 @@ export default function App() {
                         <Trash2 className="w-5 h-5" />
                       </button>
                     </div>
-                    <button className="w-full py-4 bg-white/5 border border-white/10 rounded-2xl font-semibold hover:bg-white/10 transition-all flex items-center justify-center gap-2">
-                      <RefreshCw className="w-4 h-4" />
-                      Sync Data
-                    </button>
                   </div>
                 ) : (
                   <button 
@@ -1096,7 +1148,7 @@ export default function App() {
                     className="w-full py-4 bg-emerald-500 text-black font-bold rounded-2xl hover:bg-emerald-400 transition-all flex items-center justify-center gap-2"
                   >
                     <ExternalLink className="w-4 h-4" />
-                    Connect AI Banking
+                    Connect AI
                   </button>
                 )}
               </div>

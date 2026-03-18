@@ -10,10 +10,24 @@ import https from "https";
 import { ensureCertsExist } from "./scripts/generate-certs.js";
 import admin from "firebase-admin";
 import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
-import { plaidService } from "./src/services/plaidService.js";
-import { blockchainService } from "./src/services/blockchainService.js";
+import { plaidService } from "./src/services/plaidService";
+import { blockchainService } from "./src/services/blockchainService";
+import { ledgerService } from "./src/services/ledgerService";
+import webpush from "web-push";
 
 dotenv.config();
+
+// Push Notification Setup
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY!;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY!;
+
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(
+    'mailto:sovereignties3@gmail.com',
+    VAPID_PUBLIC_KEY,
+    VAPID_PRIVATE_KEY
+  );
+}
 
 // Initialize Firebase Admin
 process.env.GOOGLE_CLOUD_PROJECT = firebaseConfig.projectId;
@@ -81,6 +95,32 @@ async function startServer() {
     }
   });
 
+  // Stripe Checkout Session
+  app.post("/api/checkout/create-session", async (req, res) => {
+    try {
+      const { priceId, quantity } = req.body;
+      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2026-02-25.clover' });
+      
+      const session = await stripe.checkout.sessions.create({
+        payment_method_types: ['card'],
+        line_items: [
+          {
+            price: priceId,
+            quantity: quantity || 1,
+          },
+        ],
+        mode: 'payment',
+        success_url: `${process.env.APP_URL}/success`,
+        cancel_url: `${process.env.APP_URL}/cancel`,
+      });
+
+      res.json({ id: session.id });
+    } catch (error) {
+      console.error("Stripe Checkout Session Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   app.post('/api/webhooks/modern-treasury', express.json(), async (req, res) => {
     try {
       const event = req.body;
@@ -113,6 +153,25 @@ async function startServer() {
   // API routes
   app.get("/api/health", async (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // Push Notification Routes
+  app.post('/api/notifications/subscribe', express.json(), async (req, res) => {
+    const subscription = req.body;
+    // Store subscription in database
+    console.log('Received subscription:', subscription);
+    res.status(201).json({ success: true });
+  });
+
+  app.post('/api/notifications/send', express.json(), async (req, res) => {
+    const { subscription, payload } = req.body;
+    try {
+      await webpush.sendNotification(subscription, JSON.stringify(payload));
+      res.status(200).json({ success: true });
+    } catch (error) {
+      console.error('Error sending push notification:', error);
+      res.status(500).json({ error: 'Failed to send notification' });
+    }
   });
 
   let persistedQueries: Record<string, string> = {};
@@ -247,6 +306,21 @@ async function startServer() {
     }
   });
 
+  // Ledger API Integration
+  app.post("/api/ledger/entry", async (req, res) => {
+    try {
+      const { computeEventId, amount, currency, type } = req.body;
+      if (!computeEventId || !amount || !currency || !type) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+      const entry = await ledgerService.createLedgerEntry(computeEventId, amount, currency, type);
+      res.json(entry);
+    } catch (error) {
+      console.error("Ledger Service Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   app.get("/api/modern_treasury/counterparties", async (req, res) => {
     try {
       const mt = new ModernTreasury({
@@ -362,7 +436,7 @@ async function startServer() {
   app.get("/api/auth/login", async (req, res) => {
     const { service, userId } = req.query;
     const appUrl = process.env.APP_URL || `https://${req.get('host')}`;
-    const redirectUri = `${appUrl}/auth/callback`;
+    const redirectUri = 'https://operationsavetheworld.firebaseapp.com/__/auth/handler';
     const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
 
     if (service === 'stripe') {
@@ -381,10 +455,10 @@ async function startServer() {
         response_type: 'code',
         client_id: process.env.CITI_CLIENT_ID!,
         redirect_uri: redirectUri,
-        scope: 'accounts_details_transactions accounts_routing_number customers_profiles accounts_statements accounts_tax_statements',
+        scope: 'accounts_transaction',
         state: JSON.stringify({ service, userId })
       });
-      return res.redirect(`https://api.citi.com/api/identity/auth/v1/oauth2/authorize?${params}`);
+      return res.redirect(`https://partner.citi.com/gcgapi/sandbox/prod/openapi/iam/tokenManagement/partner/authCode/oauth2/cgw/v1/authorize?${params}`);
     }
 
     if (service === 'aibanking') {
@@ -403,7 +477,7 @@ async function startServer() {
           parParams.append('key_id', keyId);
         }
 
-        const parResponse = await axios.post('https://auth.aibanking.dev/oauth/par', 
+        const parResponse = await axios.post('https://mtls.auth.aibanking.dev/oauth/par', 
           parParams,
           {
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -429,7 +503,7 @@ async function startServer() {
   app.get("/api/auth/url", async (req, res) => {
     const { service, userId } = req.query;
     const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
-    const redirectUri = `${appUrl}/auth/callback`;
+    const redirectUri = 'https://operationsavetheworld.firebaseapp.com/__/auth/handler';
 
     if (service === 'stripe') {
       const params = new URLSearchParams({
@@ -450,7 +524,7 @@ async function startServer() {
         scope: 'accounts_details_transactions accounts_routing_number customers_profiles accounts_statements accounts_tax_statements',
         state: JSON.stringify({ service, userId })
       });
-      return res.json({ url: `https://api.citi.com/api/identity/auth/v1/oauth2/authorize?${params}` });
+      return res.json({ url: `https://partner.citi.com/api/identity/v1/authcode/oauth2/authorize?${params}` });
     }
 
     if (service === 'aibanking') {
@@ -528,7 +602,7 @@ async function startServer() {
       let externalAccountId = '';
 
       const appUrl = process.env.APP_URL || `https://${req.get('host')}`;
-      const redirectUri = `${appUrl}/auth/callback`;
+      const redirectUri = 'https://operationsavetheworld.firebaseapp.com/__/auth/handler';
 
       if (service === 'stripe') {
         const tokenResponse = await fetch('https://connect.stripe.com/oauth/token', {
@@ -550,7 +624,7 @@ async function startServer() {
           console.error('Stripe Token Exchange Failed:', await tokenResponse.text());
         }
       } else if (service === 'citi') {
-        const tokenResponse = await axios.post('https://api.citi.com/api/identity/auth/v1/oauth2/token/us/gcb',
+        const tokenResponse = await axios.post('https://partner.citi.com/gcgapi/sandbox/prod/openapi/iam/tokenManagement/partner/authCode/oauth2/cgw/v1/token/us/cgw',
           new URLSearchParams({
             grant_type: 'authorization_code',
             code: code as string,
@@ -579,7 +653,7 @@ async function startServer() {
             tokenParams.key_id = process.env.AIBANKING_KEY_ID;
           }
 
-          const tokenResponse = await axios.post('https://auth.aibanking.dev/oauth/token', 
+          const tokenResponse = await axios.post('https://mtls.auth.aibanking.dev/oauth/token', 
             new URLSearchParams(tokenParams),
             {
               headers: { 'Content-Type': 'application/x-www-form-urlencoded' },

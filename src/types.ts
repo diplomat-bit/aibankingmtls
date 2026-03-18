@@ -130,6 +130,9 @@ export interface Ledger {
 }
 
 declare global {
+  interface Window {
+    ethereum?: any;
+  }
   namespace JSX {
     interface IntrinsicElements {
       'appkit-button': any;

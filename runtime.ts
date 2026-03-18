@@ -28,9 +28,16 @@ export class BaseAPI {
 
     protected async request(context: RequestOpts, initOverrides?: RequestInit | InitOverrideFunction): Promise<Response> {
         const url = (this.configuration.basePath || '') + context.path;
+        const headers = { ...context.headers };
+        if (this.configuration.accessToken) {
+            const token = typeof this.configuration.accessToken === 'function' 
+                ? await this.configuration.accessToken() 
+                : this.configuration.accessToken;
+            headers['Authorization'] = `Bearer ${token}`;
+        }
         const init: RequestInit = {
             method: context.method,
-            headers: context.headers,
+            headers: headers,
             body: context.body ? JSON.stringify(context.body) : undefined,
         };
         return fetch(url, init);

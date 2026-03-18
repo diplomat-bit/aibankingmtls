@@ -4,7 +4,8 @@ import { Transaction, Account } from "../types";
 export async function getFinancialAdvice(
   userMessage: string,
   transactions: Transaction[],
-  accounts: Account[]
+  accounts: Account[],
+  modelNames?: string[]
 ) {
   try {
     const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
@@ -15,8 +16,12 @@ export async function getFinancialAdvice(
         You have access to the user's accounts and recent transactions.
         Provide concise, helpful, and personalized financial advice.
         Be professional yet approachable.
+        
         Current Accounts: ${JSON.stringify(accounts)}
         Recent Transactions: ${JSON.stringify(transactions.slice(0, 10))}
+        
+        Note: You are part of a sophisticated banking platform that supports over 2,200 financial data models, including integrations with Plaid, Stripe, Modern Treasury, and Citi. 
+        If the user asks about technical capabilities or specific financial structures, you can mention that we support models like ${modelNames?.slice(0, 5).join(', ')} and many others.
         `,
       },
       contents: userMessage,

@@ -16,7 +16,7 @@ import {
   MapPin
 } from 'lucide-react';
 import { format } from 'date-fns';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -24,7 +24,14 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const api = new FdxMoneyMovementApi();
+import { auth } from '../firebase';
+
+const getApi = async () => {
+  const token = await auth.currentUser?.getIdToken();
+  return new FdxMoneyMovementApi({
+    accessToken: token
+  });
+};
 
 export const FdxView: React.FC = () => {
   const [payees, setPayees] = useState<FdxPayee[]>([]);
@@ -37,6 +44,7 @@ export const FdxView: React.FC = () => {
     const fetchData = async () => {
       setLoading(true);
       try {
+        const api = await getApi();
         const [payeesRes, paymentsRes, recurringRes] = await Promise.all([
           api.searchForPayees(),
           api.searchForPayments(),
@@ -204,7 +212,15 @@ export const FdxView: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 font-bold text-emerald-500">${pmt.amount.toFixed(2)}</td>
-                    <td className="px-6 py-4 text-sm text-zinc-400">{format(new Date(pmt.dueDate), 'MMM dd, yyyy')}</td>
+                    <td className="px-6 py-4 text-sm text-zinc-400">{
+                      (() => {
+                        try {
+                          return pmt.dueDate ? format(new Date(pmt.dueDate), 'MMM dd, yyyy') : 'Unknown';
+                        } catch (e) {
+                          return 'Unknown';
+                        }
+                      })()
+                    }</td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
                         {getStatusIcon(pmt.status)}
@@ -252,7 +268,15 @@ export const FdxView: React.FC = () => {
                     </div>
                     <div>
                       <p className="text-xs text-zinc-500 uppercase font-bold mb-1">Next Due Date</p>
-                      <p className="text-lg font-medium">{format(new Date(rec.dueDate), 'MMM dd, yyyy')}</p>
+                      <p className="text-lg font-medium">{
+                        (() => {
+                          try {
+                            return rec.dueDate ? format(new Date(rec.dueDate), 'MMM dd, yyyy') : 'Unknown';
+                          } catch (e) {
+                            return 'Unknown';
+                          }
+                        })()
+                      }</p>
                     </div>
                   </div>
 

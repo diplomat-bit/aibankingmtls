@@ -1,9 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Users, CreditCard, ArrowRightLeft, Plus, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
-import { ModernTreasuryFlow } from './ModernTreasuryFlow';
 import { ModernTreasuryApi, ModernTreasuryResource } from '../../api/ModernTreasuryApi';
-
-const mtApi = new ModernTreasuryApi();
+import { auth } from '../firebase';
 
 export const ApisView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'counterparties' | 'internal_accounts' | 'virtual_accounts' | 'flows'>('counterparties');
@@ -17,10 +15,18 @@ export const ApisView: React.FC = () => {
 
   const publishableKey = localStorage.getItem('mt_publishable_key') || '';
 
+  const getMtApi = async () => {
+    const token = await auth.currentUser?.getIdToken();
+    return new ModernTreasuryApi({
+      accessToken: token
+    });
+  };
+
   const fetchData = async (resource: string) => {
     setLoading(true);
     setError(null);
     try {
+      const mtApi = await getMtApi();
       let result: ModernTreasuryResource[] = [];
       if (resource === 'counterparties') {
         result = await mtApi.getCounterparties();
@@ -39,6 +45,7 @@ export const ApisView: React.FC = () => {
 
   const fetchCounterpartiesForFlow = async () => {
     try {
+      const mtApi = await getMtApi();
       const result = await mtApi.getCounterparties();
       setFlowCounterparties(result);
       if (result.length > 0) {
@@ -66,6 +73,7 @@ export const ApisView: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
+      const mtApi = await getMtApi();
       let result;
       if (flowType === 'account_collection') {
         result = await mtApi.createAccountCollectionFlow({
@@ -205,23 +213,17 @@ export const ApisView: React.FC = () => {
                   </button>
                 </div>
                 
-                {publishableKey ? (
-                  <ModernTreasuryFlow 
-                    clientToken={flowToken}
-                    publishableKey={publishableKey}
-                    onSuccess={(res) => {
-                      console.log("Flow Success", res);
-                      setFlowToken(null);
-                    }}
-                    onError={(err) => {
-                      console.error("Flow Error", err);
-                    }}
-                  />
+                {publishableKey && flowToken ? (
+                  <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-8 text-center">
+                    <CheckCircle2 className="w-12 h-12 text-blue-500 mx-auto mb-4" />
+                    <h4 className="text-lg font-bold text-blue-500 mb-2">Flow Created</h4>
+                    <p className="text-zinc-400 text-sm mb-6">Flow token: {flowToken}</p>
+                  </div>
                 ) : (
                   <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-8 text-center">
                     <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-4" />
-                    <h4 className="text-lg font-bold text-rose-500 mb-2">Publishable Key Missing</h4>
-                    <p className="text-zinc-400 text-sm mb-6">You need to provide your Modern Treasury publishable key in the Connections tab first.</p>
+                    <h4 className="text-lg font-bold text-rose-500 mb-2">Publishable Key or Flow Token Missing</h4>
+                    <p className="text-zinc-400 text-sm mb-6">You need to provide your Modern Treasury publishable key and create a flow first.</p>
                   </div>
                 )}
               </div>

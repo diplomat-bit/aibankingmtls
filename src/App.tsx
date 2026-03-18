@@ -57,7 +57,10 @@ import { Dashboard } from './components/Dashboard';
 import { ModelsView } from './components/ModelsView';
 import { ApisView } from './components/ApisView';
 import { FdxView } from './components/FdxView';
-import Web3View from './components/Web3View';
+import { ResourceList } from './components/ResourceList';
+import { FinancialHealth } from './components/FinancialHealth';
+import { AiTab } from './components/AiTab';
+import { ConfigTab } from './components/ConfigTab';
 import { 
   AreaChart, 
   Area, 
@@ -68,7 +71,7 @@ import {
   ResponsiveContainer 
 } from 'recharts';
 import { format } from 'date-fns';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -133,6 +136,15 @@ interface TransactionItemProps {
 
 const TransactionItem: React.FC<TransactionItemProps> = ({ tx }) => {
   const isExpense = tx.amount < 0;
+  let formattedDate = 'Unknown Date';
+  try {
+    if (tx.date) {
+      formattedDate = format(new Date(tx.date), 'MMM dd, HH:mm');
+    }
+  } catch (e) {
+    console.error('Invalid date:', tx.date);
+  }
+
   return (
     <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-transparent hover:border-white/10 transition-all group cursor-pointer">
       <div className="flex items-center gap-4">
@@ -144,7 +156,7 @@ const TransactionItem: React.FC<TransactionItemProps> = ({ tx }) => {
         </div>
         <div>
           <h5 className="font-semibold text-sm">{tx.description}</h5>
-          <p className="text-xs text-zinc-500">{tx.category} • {format(new Date(tx.date), 'MMM dd, HH:mm')}</p>
+          <p className="text-xs text-zinc-500">{tx.category} • {formattedDate}</p>
         </div>
       </div>
       <span className={cn(
@@ -186,7 +198,7 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const [isAddingTransaction, setIsAddingTransaction] = useState(false);
   const [newTx, setNewTx] = useState({ amount: '', description: '', type: 'expense' });
-  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers' | 'apis' | 'web3' | 'fdx'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers' | 'apis' | 'fdx' | 'iam' | 'ai' | 'config'>('dashboard');
   const [mtPublishableKey, setMtPublishableKey] = useState<string>(localStorage.getItem('mt_publishable_key') || '');
 
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -466,7 +478,7 @@ export default function App() {
     await addDoc(collection(db, 'chats'), userMsg);
     setChatInput('');
 
-    const advice = await getFinancialAdvice(chatInput, transactions, accounts);
+    const advice = await getFinancialAdvice(chatInput, transactions, accounts, modelNames);
     
     const modelMsg: ChatMessage = {
       id: (Date.now() + 1).toString(),
@@ -517,10 +529,18 @@ export default function App() {
   }
 
   const totalBalance = accounts.reduce((acc, curr) => acc + curr.balance, 0);
-  const chartData = transactions.slice().reverse().map(tx => ({
-    date: format(new Date(tx.date), 'MMM dd'),
-    amount: tx.amount
-  }));
+  const chartData = transactions.slice().reverse().map(tx => {
+    let dateStr = 'Unknown';
+    try {
+      if (tx.date) dateStr = format(new Date(tx.date), 'MMM dd');
+    } catch (e) {
+      console.error('Invalid date for chart:', tx.date);
+    }
+    return {
+      date: dateStr,
+      amount: tx.amount
+    };
+  });
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-white font-sans selection:bg-emerald-500/30">
@@ -577,6 +597,12 @@ export default function App() {
             onClick={() => setCurrentView('ledgers')}
           />
           <NavItem 
+            icon={<Shield className="w-5 h-5" />} 
+            label="IAM Visualizer" 
+            active={currentView === 'iam'} 
+            onClick={() => setCurrentView('iam')}
+          />
+          <NavItem 
             icon={<LayoutDashboard className="w-5 h-5" />} 
             label="Models" 
             active={currentView === 'models'} 
@@ -589,16 +615,22 @@ export default function App() {
             onClick={() => setCurrentView('apis')}
           />
           <NavItem 
-            icon={<Wallet className="w-5 h-5" />} 
-            label="Web3" 
-            active={currentView === 'web3'} 
-            onClick={() => setCurrentView('web3')}
-          />
-          <NavItem 
             icon={<ArrowUpRight className="w-5 h-5" />} 
             label="Money Movement" 
             active={currentView === 'fdx'} 
             onClick={() => setCurrentView('fdx')}
+          />
+          <NavItem 
+            icon={<Bot className="w-5 h-5" />} 
+            label="AI Assistant" 
+            active={currentView === 'ai'} 
+            onClick={() => setCurrentView('ai')}
+          />
+          <NavItem 
+            icon={<Shield className="w-5 h-5" />} 
+            label="Configuration" 
+            active={currentView === 'config'} 
+            onClick={() => setCurrentView('config')}
           />
         </nav>
 
@@ -627,8 +659,10 @@ export default function App() {
               {currentView === 'connections' && 'Service Connections'}
               {currentView === 'models' && 'API Models'}
               {currentView === 'apis' && 'API Endpoints'}
-              {currentView === 'web3' && 'Web3 & Crypto'}
               {currentView === 'fdx' && 'Money Movement (FDX)'}
+              {currentView === 'iam' && 'IAM Policy Visualizer'}
+              {currentView === 'ai' && 'AI Assistant'}
+              {currentView === 'config' && 'Configuration'}
             </h2>
             <p className="text-zinc-500">
               {currentView === 'dashboard' && "Here's what's happening with your finances today."}
@@ -639,8 +673,10 @@ export default function App() {
               {currentView === 'connections' && "Connect third-party services like Stripe and Modern Treasury."}
               {currentView === 'models' && "View all 2000+ available API models."}
               {currentView === 'apis' && "View all available API endpoints."}
-              {currentView === 'web3' && "Manage your Web3 portfolio, swap, and bridge tokens."}
               {currentView === 'fdx' && "Manage payees and payments using the FDX standard."}
+              {currentView === 'iam' && "Visualize and analyze IAM policies."}
+              {currentView === 'ai' && "Interact with your AI assistant."}
+              {currentView === 'config' && "Configure your API credentials and webhooks."}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -670,13 +706,18 @@ export default function App() {
           <ApisView />
         )}
 
-        {currentView === 'web3' && (
-          <Web3View />
-        )}
-
         {currentView === 'fdx' && (
           <FdxView />
         )}
+
+        {currentView === 'iam' && (
+          <div className="bg-[#0D0D0D] border border-white/5 rounded-3xl p-6">
+            <ResourceList />
+          </div>
+        )}
+
+        {currentView === 'ai' && <AiTab />}
+        {currentView === 'config' && <ConfigTab />}
 
         {currentView === 'dashboard' && (
           <>
@@ -684,7 +725,7 @@ export default function App() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
               <StatCard 
                 label="Total Balance" 
-                value={`$${totalBalance.toLocaleString()}`} 
+                value={`${totalBalance.toLocaleString()}`} 
                 trend="+2.4%" 
                 icon={<Wallet className="w-6 h-6 text-emerald-500" />}
               />
@@ -696,10 +737,10 @@ export default function App() {
                 icon={<ArrowDownLeft className="w-6 h-6 text-rose-500" />}
               />
               <StatCard 
-                label="Savings Goal" 
-                value="84%" 
-                trend="+5%" 
-                icon={<TrendingUp className="w-6 h-6 text-blue-500" />}
+                label="Projected Cash Flow" 
+                value="+$2,450.00" 
+                trend="+8%" 
+                icon={<Activity className="w-6 h-6 text-blue-500" />}
               />
             </div>
 
@@ -773,6 +814,8 @@ export default function App() {
                     <ActionButton icon={<TrendingUp className="w-5 h-5" />} label="Invest" />
                   </div>
                 </div>
+
+                <FinancialHealth />
               </div>
             </div>
           </>
@@ -1187,7 +1230,15 @@ export default function App() {
                         </div>
                         <div>
                           <h4 className="font-semibold capitalize">{conn.service.replace('_', ' ')}</h4>
-                          <p className="text-xs text-zinc-500">Connected on {format(new Date(conn.connectedAt), 'MMM dd, yyyy')}</p>
+                          <p className="text-xs text-zinc-500">Connected on {
+                            (() => {
+                              try {
+                                return conn.connectedAt ? format(new Date(conn.connectedAt), 'MMM dd, yyyy') : 'Unknown';
+                              } catch (e) {
+                                return 'Unknown';
+                              }
+                            })()
+                          }</p>
                         </div>
                       </div>
                       <div className="text-right">
@@ -1268,6 +1319,7 @@ export default function App() {
         <AnimatePresence>
           {isChatOpen && (
             <motion.div
+              key="chat-window"
               initial={{ opacity: 0, scale: 0.9, y: 20 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.9, y: 20 }}
@@ -1335,7 +1387,7 @@ export default function App() {
       {/* Add Transaction Modal */}
       <AnimatePresence>
         {isAddingTransaction && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div key="add-tx-modal" className="fixed inset-0 z-[60] flex items-center justify-center p-4">
             <motion.div 
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}

@@ -1,5 +1,7 @@
 import React, { useEffect, useRef } from 'react';
-import { loadModernTreasury } from "@modern-treasury/modern-treasury-js";
+import { loadModernTreasury } from '@modern-treasury/modern-treasury-js';
+const PUBLISHABLE_KEY = "publishable-live-JrFTgAvyQhmZFvVDztRzeVUC7HJ"
+const modernTreasury = await loadModernTreasury(PUBLISHABLE_KEY);
 
 interface ModernTreasuryFlowProps {
   clientToken: string;

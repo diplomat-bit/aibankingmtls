@@ -52,10 +52,10 @@ import {
   RefreshCw,
   Trash2
 } from 'lucide-react';
-import { Dashboard } from './components/Dashboard';
-import { ModelsView } from './components/ModelsView';
-import { ApisView } from './components/ApisView';
-import { FdxView } from './components/FdxView';
+import { Dashboard } from './views/Dashboard';
+import { ModelsView } from './views/ModelsView';
+import { ApisView } from './views/ApisView';
+import { FdxView } from './views/FdxView';
 import { ResourceList } from './components/ResourceList';
 import { FinancialHealth } from './components/FinancialHealth';
 import { AiTab } from './components/AiTab';

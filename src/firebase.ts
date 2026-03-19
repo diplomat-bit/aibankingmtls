@@ -4,7 +4,7 @@ import { getFirestore } from 'firebase/firestore';
 import { getAnalytics } from "firebase/analytics";
 import firebaseConfig from "../firebase-applet-config.json";
 
-const app = initializeApp(firebaseConfig);
+const app = initializeApp(firebaseConfig as any);
 let analytics = null;
 try {
   analytics = getAnalytics(app);
@@ -13,5 +13,5 @@ try {
 }
 
 export { analytics, signInWithCustomToken };
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+export const db = getFirestore(app, (firebaseConfig as any).firestoreDatabaseId);
 export const auth = getAuth(app);

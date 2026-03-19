@@ -412,6 +412,45 @@ async function startServer() {
     }
   });
 
+  app.post("/api/citi/accept-offer", async (req, res) => {
+    try {
+      const { applicationId, productCode } = req.body;
+      // Mock response based on the provided JSON structure
+      res.json({
+        status: "00 OK",
+        applicationStage: "APPROVAL",
+        ipaExpiryDate: "2018-10-20",
+        kbaRequiredFlag: "true",
+        bureauPullExpiredFlag: "true",
+        requestedProductDecision: [],
+        counterOffers: [],
+        crossSellOffers: [],
+        suggestedOffers: [],
+        kbaQuestionnaire: { vedaQuestionnaire: [] }
+      });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/citi/add-product", async (req, res) => {
+    try {
+      const { applicationId, productCode } = req.body;
+      res.json({
+        status: "00 OK",
+        applicationId: applicationId,
+        productDetails: [
+          {
+            productCode: productCode,
+            addProductStatusDescription: "Success"
+          }
+        ]
+      });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
   // Modern Treasury Ledgers Integration
   app.get("/api/modern_treasury/ledgers", async (req, res) => {
     try {
@@ -502,7 +541,8 @@ async function startServer() {
   // AI Banking Authentication
   app.get("/api/auth/aibanking/login", async (req, res) => {
     const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
-    const redirectUri = `${process.env.APP_URL || `https://${req.get('host')}`}/api/auth/aibanking/callback`;
+    const redirectUri = 'https://operationsavetheworld.firebaseapp.com/__/auth/handler';
+    const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
     
     const params = new URLSearchParams({
       response_type: 'code',
@@ -524,7 +564,7 @@ async function startServer() {
     try {
       const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
       const clientSecret = process.env.AIBANKING_CLIENT_SECRET;
-      const redirectUri = `${process.env.APP_URL || `https://${req.get('host')}`}/api/auth/aibanking/callback`;
+      const redirectUri = 'https://operationsavetheworld.firebaseapp.com/__/auth/handler';
 
       const tokenResponse = await axios.post('https://auth.aibanking.dev/oauth/token', 
         new URLSearchParams({
@@ -548,7 +588,7 @@ async function startServer() {
       // Generate Firebase Custom Token
       const customToken = await admin.auth().createCustomToken(userId);
 
-      res.redirect(`${process.env.APP_URL || `https://${req.get('host')}`}/?token=${customToken}`);
+      res.redirect(`${process.env.APP_URL || `https://${req.get('host')}`}/dashboard?token=${customToken}`);
     } catch (error) {
       console.error('Auth callback error:', error);
       res.status(500).send("Auth failed");

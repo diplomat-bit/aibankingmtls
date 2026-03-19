@@ -129,6 +129,135 @@ export interface Ledger {
   currency: string;
 }
 
+export interface CreditSpecificRecommendation {
+  recommendedCreditLimit: string;
+  btMaximumLoanPercentage: string;
+  btMonthlyInterestRate: string;
+  eppMaximumLoanPercentage: string;
+  eppMonthlyInterestRate: string;
+  btCampaignId: string;
+  eppPromoId: string;
+  effectiveInterestRate: string;
+  annualPercentageRate: string;
+  totalRepaymentAmount: string;
+  dailyInterestAmount: string;
+  annualFeeAmount: string;
+  creditApprovalExpiryDate: string;
+  creditApprovalExpiredFlag: string;
+}
+
+export interface RepaymentSchedule {
+  tenorOccurence: string;
+  paymentDueDate: string;
+  monthlyInstallmentAmount: string;
+  principalAmount: string;
+  interestAmount: string;
+  remainingPrincipalAmount: string;
+}
+
+export interface ExistingLoanDetail {
+  productCode: string;
+  organisationCode: string;
+  sourceCode: string;
+  requestedLoanAmount: string;
+  outstandingLoanAmount: string;
+  loanPayoffAmount: string;
+  installmentAmount: string;
+  annualPercentageRate: string;
+  accountOpenedDate: string;
+  accountNumber: string;
+}
+
+export interface LoanSpecificRecommendation {
+  loanAmount: string;
+  tenor: string;
+  interestRate: string;
+  handlingFee: string;
+  installmentAmount: string;
+  installmentAmountWithInsurance: string;
+  annualPercentageRate: string;
+  totalPrincipalAmount: string;
+  totalInterestAmount: string;
+  totalInstallmentAmount: string;
+  monthlyFeeAmount: string;
+  insurancePremiumAmount: string;
+  pricingPlanId: string;
+  totalRepaymentAmount: string;
+  grossLoanAmount: string;
+  totalCostOfCreditWithoutInsurance: string;
+  totalCostOfCreditWithInsurance: string;
+  aprRetentionFlag: string;
+  creditApprovalExpiryDate: string;
+  repaymentScheduleIssueDate: string;
+  repaymentSchedule: RepaymentSchedule[];
+  handlingFeePercentage: string;
+  maximumInstallmentAmount: string;
+  maximumTenor: string;
+  maximumLoanAmountWithDocument: string;
+  maximumLoanAmountWithoutDocument: string;
+  maximumLoanAmtWithoutSpouseConsent: string;
+  topupLoanFlag: string;
+  topupLoanExpiryDate: string;
+  totalLoanAmountIncExistingLoanAmt: string;
+  offeredFutureAnnualPercentageRate: string;
+  existingLoanDetails: ExistingLoanDetail[];
+  creditApprovalExpiredFlag: string;
+  topupLoanExpiredFlag: string;
+}
+
+export interface RequiredDocument {
+  documentId: string;
+  documentStatus: string;
+  documentType: string;
+  applicantType: string;
+  documentInternalId: string;
+}
+
+export interface ProductDecision {
+  productCode: string;
+  organisationCode: string;
+  sourceCode: string;
+  creditDecision: string;
+  offerProductCategory: string;
+  offerDocumentCriteria: string;
+  ipaRecommendation: string;
+  offerSequenceId: string;
+  marketingOfferOriginatingBranchId: string;
+  marketingOfferCampaignId: string;
+  marketingOfferWaveId: string;
+  creditSpecificRecommendations: CreditSpecificRecommendation[];
+  loanSpecificRecommendations: LoanSpecificRecommendation[];
+  requiredDocuments: RequiredDocument[];
+}
+
+export interface KbaQuestionnaire {
+  vedaQuestionnaire: any[];
+}
+
+export interface OfferAcceptanceResponse {
+  status: string;
+  applicationStage: string;
+  ipaExpiryDate: string;
+  kbaRequiredFlag: string;
+  bureauPullExpiredFlag: string;
+  requestedProductDecision: ProductDecision[];
+  counterOffers: ProductDecision[];
+  crossSellOffers: ProductDecision[];
+  suggestedOffers: ProductDecision[];
+  kbaQuestionnaire: KbaQuestionnaire;
+}
+
+export interface ProductDetail {
+  productCode: string;
+  addProductStatusDescription: string;
+}
+
+export interface ProductDetailResponse {
+  status: string;
+  applicationId: string;
+  productDetails: ProductDetail[];
+}
+
 declare global {
   interface Window {
     ethereum?: any;

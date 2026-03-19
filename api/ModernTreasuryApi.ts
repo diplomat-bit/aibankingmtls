@@ -75,4 +75,14 @@ export class ModernTreasuryApi extends runtime.BaseAPI {
         });
         return await response.json();
     }
+
+    async createConnection(request: { entity_id: string; nickname?: string }): Promise<ModernTreasuryResource> {
+        const response = await this.request({
+            path: `/api/modern_treasury/connections`,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: request,
+        });
+        return await response.json();
+    }
 }

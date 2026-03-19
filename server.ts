@@ -499,84 +499,60 @@ async function startServer() {
     res.status(400).send('Invalid service');
   });
 
-  // OAuth URL generation (keeping for backward compatibility or other uses)
-  app.get("/api/auth/url", async (req, res) => {
-    const { service, userId } = req.query;
-    const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
-    const redirectUri = 'https://operationsavetheworld.firebaseapp.com/__/auth/handler';
+  // AI Banking Authentication
+  app.get("/api/auth/aibanking/login", async (req, res) => {
+    const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
+    const redirectUri = `${process.env.APP_URL || `https://${req.get('host')}`}/api/auth/aibanking/callback`;
+    
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope: 'openid profile email',
+      audience: 'https://auth.aibanking.dev/userinfo',
+      state: 'login'
+    });
+    
+    res.redirect(`https://auth.aibanking.dev/authorize?${params}`);
+  });
 
-    if (service === 'stripe') {
-      const params = new URLSearchParams({
-        response_type: 'code',
-        client_id: process.env.STRIPE_CLIENT_ID!,
-        scope: 'read_write',
-        redirect_uri: redirectUri,
-        state: JSON.stringify({ service, userId })
-      });
-      return res.json({ url: `https://connect.stripe.com/oauth/authorize?${params}` });
-    }
+  app.get("/api/auth/aibanking/callback", async (req, res) => {
+    const { code, error } = req.query;
+    if (error) return res.status(400).send(`Auth failed: ${error}`);
+    if (!code) return res.status(400).send("Missing code");
 
-    if (service === 'citi') {
-      const params = new URLSearchParams({
-        response_type: 'code',
-        client_id: process.env.CITI_CLIENT_ID!,
-        redirect_uri: redirectUri,
-        scope: 'accounts_details_transactions accounts_routing_number customers_profiles accounts_statements accounts_tax_statements',
-        state: JSON.stringify({ service, userId })
-      });
-      return res.json({ url: `https://partner.citi.com/api/identity/v1/authcode/oauth2/authorize?${params}` });
-    }
-
-    if (service === 'aibanking') {
+    try {
       const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
-      const keyId = process.env.AIBANKING_KEY_ID;
-      
-      try {
-        const parParams = new URLSearchParams({
-          response_type: 'code',
+      const clientSecret = process.env.AIBANKING_CLIENT_SECRET;
+      const redirectUri = `${process.env.APP_URL || `https://${req.get('host')}`}/api/auth/aibanking/callback`;
+
+      const tokenResponse = await axios.post('https://auth.aibanking.dev/oauth/token', 
+        new URLSearchParams({
+          grant_type: 'authorization_code',
           client_id: clientId,
-          redirect_uri: redirectUri,
-          scope: 'openid profile email offline_access',
-          audience: 'https://auth.aibanking.dev/userinfo',
-          state: JSON.stringify({ service, userId })
-        });
+          client_secret: clientSecret!,
+          code: code as string,
+          redirect_uri: redirectUri
+        }),
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+      );
 
-        if (keyId) {
-          parParams.append('key_id', keyId);
-        }
+      const { id_token } = tokenResponse.data;
+      
+      // Decode id_token to get user info (or call userinfo endpoint)
+      // For now, let's assume we can get the user's email/id from the token
+      // In a real app, you'd verify the token and get the user's ID
+      const userEmail = 'user@aibanking.dev'; // Placeholder
+      const userId = 'aibanking_user_123'; // Placeholder
 
-        // Pushed Authorization Request (PAR) with mTLS
-        const parResponse = await axios.post('https://aibanking.us.auth0.com/oauth/par', 
-          parParams,
-          {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            httpsAgent
-          }
-        );
+      // Generate Firebase Custom Token
+      const customToken = await admin.auth().createCustomToken(userId);
 
-        if (parResponse.status === 201 || parResponse.status === 200) {
-          const { request_uri } = parResponse.data;
-          return res.json({ 
-            url: `https://auth.aibanking.dev/authorize?request_uri=${request_uri}&client_id=${clientId}` 
-          });
-        }
-      } catch (error: any) {
-        console.error('PAR Error:', error.response?.data || error.message);
-      }
-
-      // Fallback to standard authorize if PAR fails or is not supported
-      const params = new URLSearchParams({
-        response_type: 'code',
-        client_id: clientId,
-        redirect_uri: redirectUri,
-        scope: 'openid profile email offline_access',
-        audience: 'https://auth.aibanking.dev/userinfo',
-        state: JSON.stringify({ service, userId })
-      });
-      return res.json({ url: `https://auth.aibanking.dev/authorize?${params}` });
+      res.redirect(`${process.env.APP_URL || `https://${req.get('host')}`}/?token=${customToken}`);
+    } catch (error) {
+      console.error('Auth callback error:', error);
+      res.status(500).send("Auth failed");
     }
-
-    res.status(400).json({ error: 'Invalid service' });
   });
 
   // OAuth Callback
@@ -772,9 +748,22 @@ async function startServer() {
       console.log("Mapped SCIM User to Auth0 format:", auth0User);
       
       // Return standard SCIM response
+      const scimToken = process.env.AUTH0_SCIM_TOKEN;
+      if (!scimToken) {
+        return res.status(500).json({ error: 'AUTH0_SCIM_TOKEN environment variable is required' });
+      }
+
+      // Send to Auth0 SCIM endpoint
+      const response = await axios.post(AUTH0_SCIM_URL, auth0User, {
+        headers: {
+          'Authorization': `Bearer ${scimToken}`,
+          'Content-Type': 'application/scim+json'
+        }
+      });
+
       res.status(201).json({
         ...scimUser,
-        id: auth0User.app_metadata.external_id || `usr_${Date.now()}`,
+        id: response.data.id || auth0User.app_metadata.external_id || `usr_${Date.now()}`,
         meta: {
           resourceType: "User",
           created: new Date().toISOString(),
@@ -782,6 +771,7 @@ async function startServer() {
         }
       });
     } catch (error) {
+      console.error('SCIM receive error:', error);
       res.status(500).json({ schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"], detail: String(error), status: "500" });
     }
   });
@@ -810,24 +800,18 @@ async function startServer() {
         return res.status(500).json({ error: 'AUTH0_SCIM_TOKEN environment variable is required' });
       }
 
-      const response = await fetch(AUTH0_SCIM_URL, {
-        method: 'POST',
+      // Send to Auth0 SCIM endpoint
+      const response = await axios.post(AUTH0_SCIM_URL, scimPayload, {
         headers: {
-          'Content-Type': 'application/scim+json',
-          'Authorization': `Bearer ${scimToken}`
-        },
-        body: JSON.stringify(scimPayload)
+          'Authorization': `Bearer ${scimToken}`,
+          'Content-Type': 'application/scim+json'
+        }
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        return res.status(response.status).json({ error: errorText });
-      }
-
-      const data = await response.json();
-      res.json({ success: true, data });
+      res.status(200).json(response.data);
     } catch (error) {
-      res.status(500).json({ error: String(error) });
+      console.error('SCIM push error:', error);
+      res.status(500).json({ error: 'Failed to push user to Auth0' });
     }
   });
 

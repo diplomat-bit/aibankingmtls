@@ -6,8 +6,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   onAuthStateChanged, 
-  signInWithPopup, 
-  GoogleAuthProvider, 
+  signInWithCustomToken,
   signOut, 
   User as FirebaseUser 
 } from 'firebase/auth';
@@ -204,6 +203,19 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const token = urlParams.get('token');
+    if (token) {
+      signInWithCustomToken(auth, token)
+        .then(() => {
+          // Remove token from URL
+          window.history.replaceState({}, document.title, window.location.pathname);
+        })
+        .catch((error) => {
+          console.error('Custom token sign-in failed', error);
+        });
+    }
+
     const handleOAuthMessage = async (event: MessageEvent) => {
       const origin = event.origin;
       if (!origin.endsWith('.run.app') && !origin.includes('localhost')) {
@@ -396,15 +408,6 @@ export default function App() {
     }
   }, [currentView]);
 
-  const handleLogin = async () => {
-    const provider = new GoogleAuthProvider();
-    try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error('Login failed', error);
-    }
-  };
-
   const handleLogout = () => signOut(auth);
 
   const handleConnectService = async (service: 'stripe' | 'modern_treasury' | 'aibanking' | 'citi') => {
@@ -517,11 +520,11 @@ export default function App() {
             <p className="text-zinc-400">Experience the future of personal finance with intelligent insights and seamless management.</p>
           </div>
           <button
-            onClick={handleLogin}
+            onClick={() => window.location.href = '/api/auth/aibanking/login'}
             className="w-full py-4 bg-white text-black font-semibold rounded-2xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-3"
           >
-            <img src="https://www.google.com/favicon.ico" className="w-5 h-5" alt="Google" />
-            Continue with Google
+            <Globe className="w-5 h-5" />
+            Continue with AI Banking
           </button>
         </motion.div>
       </div>

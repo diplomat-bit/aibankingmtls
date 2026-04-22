@@ -258,6 +258,22 @@ export interface ProductDetailResponse {
   productDetails: ProductDetail[];
 }
 
+export interface PlaidCredentials {
+  clientId: string;
+  secret: string;
+  environment: 'sandbox' | 'development' | 'production';
+}
+
+export interface MarqetaCredentials {
+  token: string;
+  secret: string;
+}
+
+export interface ModernTreasuryCredentials {
+  apiKey: string;
+  organizationId: string;
+}
+
 declare global {
   interface Window {
     ethereum?: any;

@@ -1,22 +1,42 @@
 import React, { useState, useEffect } from 'react';
 import { Activity, Users, CreditCard, ArrowRightLeft, Plus, Loader2, CheckCircle2, AlertCircle } from 'lucide-react';
-import { ModernTreasuryApi, ModernTreasuryResource } from '../../api/ModernTreasuryApi';
+import { ModernTreasuryApi, ModernTreasuryResource } from '@/src/api/ModernTreasuryApi';
 import { auth } from '../firebase';
 
 export const ApisView: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'counterparties' | 'internal_accounts' | 'virtual_accounts' | 'flows'>('counterparties');
+  const [activeTab, setActiveTab] = useState<'counterparties' | 'internal_accounts' | 'virtual_accounts' | 'flows' | 'payment_orders'>('counterparties');
   const [data, setData] = useState<ModernTreasuryResource[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [flowToken, setFlowToken] = useState<string | null>(null);
   const [flowType, setFlowType] = useState<'account_collection' | 'payment'>('account_collection');
   const [flowCounterparties, setFlowCounterparties] = useState<ModernTreasuryResource[]>([]);
   const [selectedCounterpartyId, setSelectedCounterpartyId] = useState<string>('');
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      setUser(user);
+    });
+    return unsubscribe;
+  }, []);
+
+  const [paymentOrder, setPaymentOrder] = useState({
+    amount: '',
+    currency: 'USD',
+    direction: 'credit',
+    originating_account_id: '',
+    receiving_account_id: '',
+    type: 'ach',
+    description: 'Money movement via Aura'
+  });
 
   const publishableKey = localStorage.getItem('mt_publishable_key') || '';
 
   const getMtApi = async () => {
-    const token = await auth.currentUser?.getIdToken();
+    if (!user) throw new Error("Not authenticated");
+    const token = await user.getIdToken();
     return new ModernTreasuryApi({
       accessToken: token
     });
@@ -57,12 +77,13 @@ export const ApisView: React.FC = () => {
   };
 
   useEffect(() => {
+    if (!user) return;
     if (activeTab !== 'flows') {
       fetchData(activeTab);
     } else {
       fetchCounterpartiesForFlow();
     }
-  }, [activeTab]);
+  }, [activeTab, user]);
 
   const createFlow = async () => {
     if (!selectedCounterpartyId) {
@@ -102,6 +123,39 @@ export const ApisView: React.FC = () => {
     }
   };
 
+  const handleCreatePaymentOrder = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      const mtApi = await getMtApi();
+      const res = await mtApi.createPaymentOrder({
+        amount: parseFloat(paymentOrder.amount),
+        currency: paymentOrder.currency,
+        direction: paymentOrder.direction,
+        originating_account_id: paymentOrder.originating_account_id,
+        receiving_account_id: paymentOrder.receiving_account_id || undefined,
+        type: paymentOrder.type,
+        description: paymentOrder.description
+      });
+      setSuccess(`Payment order ${res.id} created successfully!`);
+      setPaymentOrder({
+        amount: '',
+        currency: 'USD',
+        direction: 'credit',
+        originating_account_id: '',
+        receiving_account_id: '',
+        type: 'ach',
+        description: 'Money movement via Aura'
+      });
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="space-y-8">
       {/* Header & Tabs */}
@@ -116,6 +170,7 @@ export const ApisView: React.FC = () => {
             { id: 'internal_accounts', label: 'Internal', icon: Activity },
             { id: 'virtual_accounts', label: 'Virtual', icon: CreditCard },
             { id: 'flows', label: 'Flows', icon: ArrowRightLeft },
+            { id: 'payment_orders', label: 'Payment Orders', icon: CreditCard },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -135,7 +190,136 @@ export const ApisView: React.FC = () => {
 
       {/* Content Area */}
       <div className="bg-[#0D0D0D] border border-white/5 rounded-3xl overflow-hidden">
-        {activeTab === 'flows' ? (
+        {activeTab === 'payment_orders' ? (
+          <div className="p-8 max-w-2xl mx-auto">
+            <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
+              <div className="mb-8">
+                <h3 className="text-2xl font-bold mb-2">Move Money</h3>
+                <p className="text-zinc-500 text-sm">Create a payment order to transfer funds between accounts.</p>
+              </div>
+
+              {success && (
+                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 mb-6 flex items-center gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+                  <p className="text-emerald-500 text-sm font-medium">{success}</p>
+                </div>
+              )}
+
+              {error && (
+                <div className="bg-rose-500/10 border border-rose-500/20 rounded-xl p-4 mb-6 flex items-center gap-3">
+                  <AlertCircle className="w-5 h-5 text-rose-500" />
+                  <p className="text-rose-500 text-sm font-medium">{error}</p>
+                </div>
+              )}
+
+              <form onSubmit={handleCreatePaymentOrder} className="space-y-6">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-zinc-500 mb-2 tracking-wider">Amount</label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      required
+                      value={paymentOrder.amount}
+                      onChange={(e) => setPaymentOrder({...paymentOrder, amount: e.target.value})}
+                      placeholder="0.00"
+                      className="w-full bg-[#0D0D0D] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-zinc-500 mb-2 tracking-wider">Currency</label>
+                    <select
+                      value={paymentOrder.currency}
+                      onChange={(e) => setPaymentOrder({...paymentOrder, currency: e.target.value})}
+                      className="w-full bg-[#0D0D0D] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                    >
+                      <option value="USD">USD</option>
+                      <option value="EUR">EUR</option>
+                      <option value="GBP">GBP</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-zinc-500 mb-2 tracking-wider">Direction</label>
+                    <div className="flex bg-white/5 rounded-xl p-1 gap-1">
+                      {['credit', 'debit'].map(dir => (
+                        <button
+                          key={dir}
+                          type="button"
+                          onClick={() => setPaymentOrder({...paymentOrder, direction: dir})}
+                          className={`flex-1 py-2 text-xs font-bold uppercase rounded-lg transition-all ${
+                            paymentOrder.direction === dir ? 'bg-white text-black' : 'text-zinc-500 hover:text-white'
+                          }`}
+                        >
+                          {dir}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-zinc-500 mb-2 tracking-wider">Type</label>
+                    <select
+                      value={paymentOrder.type}
+                      onChange={(e) => setPaymentOrder({...paymentOrder, type: e.target.value})}
+                      className="w-full bg-[#0D0D0D] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                    >
+                      <option value="ach">ACH</option>
+                      <option value="wire">Wire</option>
+                      <option value="check">Check</option>
+                      <option value="rtp">RTP</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase text-zinc-500 mb-2 tracking-wider">Originating Account ID</label>
+                  <input
+                    type="text"
+                    required
+                    value={paymentOrder.originating_account_id}
+                    onChange={(e) => setPaymentOrder({...paymentOrder, originating_account_id: e.target.value })}
+                    placeholder="acc_..."
+                    className="w-full bg-[#0D0D0D] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 transition-colors font-mono text-sm"
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-1">Found in 'Internal Accounts' tab</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase text-zinc-500 mb-2 tracking-wider">Receiving Account ID (Optional)</label>
+                  <input
+                    type="text"
+                    value={paymentOrder.receiving_account_id}
+                    onChange={(e) => setPaymentOrder({...paymentOrder, receiving_account_id: e.target.value })}
+                    placeholder="acc_..."
+                    className="w-full bg-[#0D0D0D] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 transition-colors font-mono text-sm"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold uppercase text-zinc-500 mb-2 tracking-wider">Description</label>
+                  <input
+                    type="text"
+                    value={paymentOrder.description}
+                    onChange={(e) => setPaymentOrder({...paymentOrder, description: e.target.value })}
+                    placeholder="Payment for..."
+                    className="w-full bg-[#0D0D0D] border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 transition-colors"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full py-4 bg-emerald-500 text-black font-bold rounded-2xl hover:bg-emerald-400 transition-all flex items-center justify-center gap-2 disabled:opacity-50 mt-4"
+                >
+                  {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+                  Execute Payment Order
+                </button>
+              </form>
+            </div>
+          </div>
+        ) : activeTab === 'flows' ? (
           <div className="p-8">
             {!flowToken ? (
               <div className="max-w-2xl mx-auto bg-white/5 border border-white/10 rounded-3xl p-8">

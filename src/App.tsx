@@ -7,6 +7,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   onAuthStateChanged, 
   signInWithCustomToken,
+  signInWithPopup,
+  GoogleAuthProvider,
   signOut, 
   User as FirebaseUser 
 } from 'firebase/auth';
@@ -27,6 +29,7 @@ import { auth, db } from './firebase';
 import { UserProfile, Account, Transaction, ChatMessage, Investment, Card, UserConnection, Ledger } from './types';
 import { getFinancialAdvice, categorizeTransaction } from './services/geminiService';
 import { connectionService } from './services/connectionService';
+import { ModernTreasuryApi } from '@/src/api/ModernTreasuryApi';
 import { modelNames } from './modelNames';
 import { 
   LayoutDashboard, 
@@ -60,6 +63,7 @@ import { ResourceList } from './components/ResourceList';
 import { FinancialHealth } from './components/FinancialHealth';
 import { AiTab } from './components/AiTab';
 import { ConfigTab } from './components/ConfigTab';
+import GraphQLView from './components/GraphQLView';
 import { 
   AreaChart, 
   Area, 
@@ -70,7 +74,7 @@ import {
   ResponsiveContainer 
 } from 'recharts';
 import { format } from 'date-fns';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -183,6 +187,17 @@ const ActionButton: React.FC<ActionButtonProps> = ({ icon, label }) => {
 }
 
 export default function App() {
+  const [errorHeader, setErrorHeader] = useState<string | null>(null);
+
+  // Catch early init errors
+  useEffect(() => {
+    const handleError = (e: ErrorEvent) => {
+      setErrorHeader(`Init Error: ${e.message}`);
+    };
+    window.addEventListener('error', handleError);
+    return () => window.removeEventListener('error', handleError);
+  }, []);
+
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -197,8 +212,29 @@ export default function App() {
   const [chatInput, setChatInput] = useState('');
   const [isAddingTransaction, setIsAddingTransaction] = useState(false);
   const [newTx, setNewTx] = useState({ amount: '', description: '', type: 'expense' });
-  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers' | 'apis' | 'fdx' | 'iam' | 'ai' | 'config'>('dashboard');
+  const [currentView, setCurrentView] = useState<'dashboard' | 'accounts' | 'investments' | 'cards' | 'advisor' | 'connections' | 'models' | 'ledgers' | 'apis' | 'fdx' | 'iam' | 'ai' | 'config' | 'graphql'>('dashboard');
   const [mtPublishableKey, setMtPublishableKey] = useState<string>(localStorage.getItem('mt_publishable_key') || '');
+  const [mtApiKey, setMtApiKey] = useState('');
+  const [mtOrgId, setMtOrgId] = useState('');
+  const [isSavingMt, setIsSavingMt] = useState(false);
+  const [mtConfigStatus, setMtConfigStatus] = useState<{type: 'success' | 'error', message: string} | null>(null);
+
+  const handleSaveMtCredentials = async () => {
+    if (!user || !mtApiKey || !mtOrgId) return;
+    setIsSavingMt(true);
+    setMtConfigStatus(null);
+    try {
+      const mtApi = new ModernTreasuryApi({ accessToken: await user.getIdToken() });
+      await mtApi.saveCredentials({ apiKey: mtApiKey, organizationId: mtOrgId });
+      setMtConfigStatus({ type: 'success', message: 'Credentials saved successfully' });
+      setMtApiKey('');
+      setMtOrgId('');
+    } catch (err: any) {
+      setMtConfigStatus({ type: 'error', message: err.message || 'Failed to save credentials' });
+    } finally {
+      setIsSavingMt(false);
+    }
+  };
 
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -494,15 +530,39 @@ export default function App() {
     await addDoc(collection(db, 'chats'), modelMsg);
   };
 
-  if (loading) {
+  if (errorHeader) {
     return (
-      <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
-        <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin" />
+      <div className="min-h-screen bg-rose-950 text-rose-100 p-10 flex items-center justify-center">
+        <div className="max-w-xl">
+          <h1 className="text-2xl font-bold mb-4">Application Error</h1>
+          <pre className="bg-black/50 p-4 rounded-xl text-sm overflow-auto max-h-96">{errorHeader}</pre>
+          <button onClick={() => window.location.reload()} className="mt-6 px-6 py-2 bg-rose-500 text-white rounded-xl font-bold">Reload App</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading) {
+    console.log('App: Rendering loading state. User:', user?.uid);
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] flex flex-col items-center justify-center">
+        <div className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full animate-spin mb-4" />
+        <p className="text-zinc-500 text-sm animate-pulse">Initializing financial ecosystem...</p>
       </div>
     );
   }
 
   if (!user) {
+    const handleGoogleLogin = async () => {
+      try {
+        const provider = new GoogleAuthProvider();
+        await signInWithPopup(auth, provider);
+      } catch (error) {
+        console.error('Google Login Error:', error);
+      }
+    };
+
+    console.log('App: Rendering login view');
     return (
       <div className="min-h-screen bg-[#0A0A0A] flex flex-col items-center justify-center p-4">
         <motion.div 
@@ -519,20 +579,23 @@ export default function App() {
             <h1 className="text-4xl font-bold text-white tracking-tight">Aura AI Bank</h1>
             <p className="text-zinc-400">Experience the future of personal finance with intelligent insights and seamless management.</p>
           </div>
-          <button
-            onClick={() => window.location.href = '/api/auth/aibanking/login'}
-            className="w-full py-4 bg-white text-black font-semibold rounded-2xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-3"
-          >
-            <Globe className="w-5 h-5" />
-            Continue with AI Banking
-          </button>
+          <div className="space-y-4">
+            <button
+              onClick={handleGoogleLogin}
+              className="w-full py-4 bg-white text-black font-semibold rounded-2xl hover:bg-zinc-200 transition-colors flex items-center justify-center gap-3"
+            >
+              <Globe className="w-5 h-5" />
+              Continue with Google
+            </button>
+          </div>
         </motion.div>
       </div>
     );
   }
 
-  const totalBalance = accounts.reduce((acc, curr) => acc + curr.balance, 0);
-  const chartData = transactions.slice().reverse().map(tx => {
+  console.log('App: Rendering main view');
+  const totalBalance = Array.isArray(accounts) ? accounts.reduce((acc, curr) => acc + curr.balance, 0) : 0;
+  const chartData = Array.isArray(transactions) ? transactions.slice().reverse().map(tx => {
     let dateStr = 'Unknown';
     try {
       if (tx.date) dateStr = format(new Date(tx.date), 'MMM dd');
@@ -543,7 +606,7 @@ export default function App() {
       date: dateStr,
       amount: tx.amount
     };
-  });
+  }) : [];
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-white font-sans selection:bg-emerald-500/30">
@@ -635,6 +698,12 @@ export default function App() {
             active={currentView === 'config'} 
             onClick={() => setCurrentView('config')}
           />
+          <NavItem 
+            icon={<Activity className="w-5 h-5" />} 
+            label="GraphQL" 
+            active={currentView === 'graphql'} 
+            onClick={() => setCurrentView('graphql')}
+          />
         </nav>
 
         <div className="mt-auto pt-6 border-t border-white/5">
@@ -666,6 +735,7 @@ export default function App() {
               {currentView === 'iam' && 'IAM Policy Visualizer'}
               {currentView === 'ai' && 'AI Assistant'}
               {currentView === 'config' && 'Configuration'}
+              {currentView === 'graphql' && 'GraphQL Operations'}
             </h2>
             <p className="text-zinc-500">
               {currentView === 'dashboard' && "Here's what's happening with your finances today."}
@@ -680,6 +750,7 @@ export default function App() {
               {currentView === 'iam' && "Visualize and analyze IAM policies."}
               {currentView === 'ai' && "Interact with your AI assistant."}
               {currentView === 'config' && "Configure your API credentials and webhooks."}
+              {currentView === 'graphql' && "Manage and execute GraphQL operations."}
             </p>
           </div>
           <div className="flex items-center gap-4">
@@ -721,6 +792,7 @@ export default function App() {
 
         {currentView === 'ai' && <AiTab />}
         {currentView === 'config' && <ConfigTab />}
+        {currentView === 'graphql' && <GraphQLView />}
 
         {currentView === 'dashboard' && (
           <>
@@ -1098,18 +1170,58 @@ export default function App() {
                   <p className="text-zinc-400 text-sm mb-4 leading-relaxed">
                     Configure your API Key and Org ID in environment variables.
                   </p>
-                  <div className="mb-6">
-                    <label className="text-[10px] uppercase font-bold text-zinc-500 mb-2 block">Publishable Key</label>
-                    <input 
-                      type="password"
-                      value={mtPublishableKey}
-                      onChange={(e) => {
-                        setMtPublishableKey(e.target.value);
-                        localStorage.setItem('mt_publishable_key', e.target.value);
-                      }}
-                      placeholder="pk_live_..."
-                      className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-emerald-500/50"
-                    />
+                  <div className="space-y-4 mb-6">
+                    <div>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500 mb-2 block">Organization ID</label>
+                      <input 
+                        type="text"
+                        value={mtOrgId}
+                        onChange={(e) => setMtOrgId(e.target.value)}
+                        placeholder="org_..."
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-emerald-500/50 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500 mb-2 block">API Key</label>
+                      <input 
+                        type="password"
+                        value={mtApiKey}
+                        onChange={(e) => setMtApiKey(e.target.value)}
+                        placeholder="api_key_..."
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-emerald-500/50 text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] uppercase font-bold text-zinc-500 mb-2 block">Publishable Key</label>
+                      <input 
+                        type="password"
+                        value={mtPublishableKey}
+                        onChange={(e) => {
+                          setMtPublishableKey(e.target.value);
+                          localStorage.setItem('mt_publishable_key', e.target.value);
+                        }}
+                        placeholder="pk_live_..."
+                        className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-xs focus:outline-none focus:border-emerald-500/50 text-white"
+                      />
+                    </div>
+                    
+                    {mtConfigStatus && (
+                      <p className={cn(
+                        "text-[10px] font-medium",
+                        mtConfigStatus.type === 'success' ? "text-emerald-500" : "text-rose-500"
+                      )}>
+                        {mtConfigStatus.message}
+                      </p>
+                    )}
+
+                    <button 
+                      onClick={handleSaveMtCredentials}
+                      disabled={isSavingMt || !mtApiKey || !mtOrgId}
+                      className="w-full py-2 bg-blue-500 text-white text-xs font-bold rounded-xl hover:bg-blue-400 disabled:opacity-50 transition-all flex items-center justify-center gap-2"
+                    >
+                      {isSavingMt ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
+                      Bootstrap SDK
+                    </button>
                   </div>
                 </div>
 

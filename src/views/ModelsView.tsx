@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { modelNames } from '../modelNames';
 import { Search, FileCode, ChevronRight, X, Code2, Database, ShieldCheck } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 
 export const ModelsView: React.FC = () => {
   const [search, setSearch] = useState('');

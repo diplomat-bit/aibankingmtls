@@ -1,9 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { LayoutDashboard, CreditCard, Landmark, Activity } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { ModernTreasuryApi } from '../../api/ModernTreasuryApi';
-
-const mtApi = new ModernTreasuryApi();
+import { ModernTreasuryApi } from '@/src/api/ModernTreasuryApi';
+import { auth } from '../firebase';
 
 interface Account {
   id: string;
@@ -17,9 +16,18 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     const fetchData = async () => {
+      // Wait for auth to be ready
+      const currentUser = auth.currentUser;
+      if (!currentUser) {
+        console.log('Dashboard: Waiting for authentication...');
+        return;
+      }
+
       try {
+        const token = await currentUser.getIdToken();
+        const mtApi = new ModernTreasuryApi({ accessToken: token });
         const data = await mtApi.getAccounts();
-        // Assuming data is an array of accounts, mapping to our interface
+        
         if (Array.isArray(data)) {
           setAccounts(data.map((acc: any) => ({
               id: acc.id,
@@ -28,7 +36,7 @@ export const Dashboard: React.FC = () => {
           })));
         } else {
           console.error('Expected array of accounts, got:', data);
-          setAccounts([]); // Set to empty array to avoid crash
+          setAccounts([]); 
         }
       } catch (error) {
         console.error('Error fetching accounts:', error);
@@ -36,7 +44,16 @@ export const Dashboard: React.FC = () => {
         setLoading(false);
       }
     };
-    fetchData();
+
+    const unsubscribe = auth.onAuthStateChanged((user) => {
+      if (user) {
+        fetchData();
+      } else {
+        setLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
   }, []);
 
   if (loading) return <div>Loading...</div>;

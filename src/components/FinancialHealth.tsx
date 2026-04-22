@@ -1,6 +1,6 @@
 import React from 'react';
 import { Shield, TrendingUp, AlertTriangle, CheckCircle2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 
 interface InsightProps {
   title: string;

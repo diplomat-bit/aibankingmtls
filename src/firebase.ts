@@ -4,7 +4,9 @@ import { getFirestore } from 'firebase/firestore';
 import { getAnalytics } from "firebase/analytics";
 import firebaseConfig from "../firebase-applet-config.json";
 
+console.log('Firebase: Initializing app...');
 const app = initializeApp(firebaseConfig as any);
+console.log('Firebase: Initialized successfully');
 let analytics = null;
 try {
   analytics = getAnalytics(app);

@@ -10,23 +10,107 @@ import https from "https";
 import { ensureCertsExist } from "./scripts/generate-certs.js";
 import admin from "firebase-admin";
 import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
-import { plaidService } from "./src/services/plaidService";
-import { blockchainService } from "./src/services/blockchainService";
-import { ledgerService } from "./src/services/ledgerService";
+import { plaidService } from "./services/plaidService";
+import { blockchainService } from "./services/blockchainService";
+import { ledgerService } from "./services/ledgerService";
 import webpush from "web-push";
+import { createClient } from 'redis';
+import { decodeJwt } from 'jose';
+import { DataAPIClient } from "@datastax/astra-db-ts";
 
 dotenv.config();
 
+// Redis Setup
+const redisHost = process.env.REDIS_HOST;
+const redisPassword = process.env.REDIS_PASSWORD;
+const redisUrl = (redisHost && redisHost.startsWith('redis://')) 
+  ? redisHost 
+  : undefined;
+
+const redisClient = createClient(
+  redisUrl 
+    ? { url: redisUrl }
+    : {
+        username: 'default',
+        password: redisPassword || 'REDIS_PASSWORD',
+        socket: {
+          host: redisHost || 'REDIS_HOST',
+          port: 16615 // Matching the port from the error message
+        }
+      }
+);
+
+redisClient.on('error', err => console.log('Redis Client Error', err));
+
+async function startRedis() {
+  try {
+    await redisClient.connect();
+    console.log('Redis Connected');
+    await redisClient.set('foo', 'bar');
+    const result = await redisClient.get('foo');
+    console.log('Redis Test Result:', result);
+  } catch (err) {
+    console.error('Redis Connection Error:', err);
+  }
+}
+
+startRedis();
+
+// Astra DB Setup
+const astraToken = process.env.ASTRA_DB_APPLICATION_TOKEN;
+const astraEndpoint = process.env.ASTRA_DB_ENDPOINT || 'https://77baf575-a343-4100-a319-14042f368fb6-us-east1.apps.astra.datastax.com';
+
+let astraDb: any = null;
+
+if (astraToken) {
+  const astraClient = new DataAPIClient();
+  astraDb = astraClient.db(astraEndpoint, { token: astraToken });
+  
+  (async () => {
+    try {
+      const colls = await astraDb.listCollections();
+      console.log('Connected to AstraDB collections:', colls.length);
+      
+      // Ensure application_credentials collection exists
+      const hasCreds = colls.some((c: any) => c.name === 'application_credentials');
+      if (!hasCreds) {
+        try {
+          await astraDb.createCollection('application_credentials');
+          console.log('Created application_credentials collection');
+        } catch (createErr: any) {
+          if (createErr.message?.includes('already exists')) {
+            console.warn('application_credentials collection already exists (skipping creation)');
+          } else {
+            console.error('Error creating application_credentials collection:', createErr);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('AstraDB Connection Error:', err);
+    }
+  })();
+}
+
+async function getAppCredentials(appId: string) {
+  if (!astraDb) return null;
+  const coll = astraDb.collection('application_credentials');
+  return await coll.findOne({ _id: appId });
+}
+
 // Push Notification Setup
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY!;
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY!;
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails(
-    'mailto:sovereignties3@gmail.com',
-    VAPID_PUBLIC_KEY,
-    VAPID_PRIVATE_KEY
-  );
+  try {
+    webpush.setVapidDetails(
+      'mailto:sovereignties3@gmail.com',
+      VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY
+    );
+  } catch (err) {
+    console.error('Error setting VAPID details:', err);
+  }
 }
 
 // Initialize Firebase Admin
@@ -174,17 +258,16 @@ async function startServer() {
     }
   });
 
-  let persistedQueries: Record<string, string> = {};
-
+  // GraphQL Implementation
   app.post("/api/graphql/upload-queries", async (req, res) => {
     try {
       const { operations } = req.body;
       if (Array.isArray(operations)) {
-        operations.forEach((op: any) => {
+        for (const op of operations) {
           if (op.id && op.body) {
-            persistedQueries[op.id] = op.body;
+            await redisClient.hSet('graphql:queries', op.id, op.body);
           }
-        });
+        }
         res.json({ success: true, count: operations.length });
       } else {
         res.status(400).json({ error: "Invalid format. Expected 'operations' array." });
@@ -201,7 +284,7 @@ async function startServer() {
 
       if (!graphqlQuery && extensions?.persistedQuery?.sha256Hash) {
         const hash = extensions.persistedQuery.sha256Hash;
-        graphqlQuery = persistedQueries[hash];
+        graphqlQuery = await redisClient.hGet('graphql:queries', hash);
         if (!graphqlQuery) {
           return res.status(400).json({ errors: [{ message: "PersistedQueryNotFound" }] });
         }
@@ -211,16 +294,20 @@ async function startServer() {
         return res.status(400).json({ error: "Query is required" });
       }
 
-      // Here you would typically forward the query to your actual GraphQL server
-      // For now, we'll just mock a successful response or forward it to Modern Treasury if it's an MT query
       console.log(`Executing GraphQL operation: ${operationName || 'Anonymous'}`);
       
-      // Mock response
+      // For real implementation, this would forward to a GraphQL engine
+      // Here we'll store the execution log in Redis
+      const logKey = `graphql:logs:${Date.now()}`;
+      await redisClient.set(logKey, JSON.stringify({ operationName, variables, timestamp: new Date().toISOString() }));
+      await redisClient.expire(logKey, 3600); // Expire after 1 hour
+
       res.json({
         data: {
           message: `Successfully executed ${operationName || 'query'}`,
           query: graphqlQuery.substring(0, 100) + '...',
-          variables
+          variables,
+          executionId: logKey
         }
       });
     } catch (error) {
@@ -286,22 +373,228 @@ async function startServer() {
     }
   });
 
-  // Modern Treasury API Integration
-  app.get("/api/modern_treasury/accounts", async (req, res) => {
-    try {
-      if (!process.env.MODERN_TREASURY_API_KEY || !process.env.MODERN_TREASURY_ORGANIZATION_ID) {
-        return res.status(500).json({ error: "Modern Treasury credentials not configured" });
+  // Modern Treasury API Helper
+  async function getMTClient(userId: string) {
+    if (userId && astraDb) {
+      try {
+        const coll = astraDb.collection('application_credentials');
+        const creds = await coll.findOne({ _id: `mt:${userId}` });
+        if (creds && creds.apiKey && creds.organizationId) {
+          console.log(`[MT] Using credentials from AstraDB for user ${userId}`);
+          return new ModernTreasury({
+            apiKey: creds.apiKey,
+            organizationID: creds.organizationId,
+          });
+        }
+      } catch (err) {
+        console.error('[MT] Error fetching credentials from AstraDB:', err);
       }
+    }
 
-      const mt = new ModernTreasury({
+    if (process.env.MODERN_TREASURY_API_KEY && process.env.MODERN_TREASURY_ORGANIZATION_ID) {
+      console.log('[MT] Using credentials from environment variables');
+      return new ModernTreasury({
         apiKey: process.env.MODERN_TREASURY_API_KEY,
         organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID,
       });
+    }
+
+    throw new Error("Modern Treasury credentials not found. Please provide Org ID and API Key in Connections tab.");
+  }
+
+  // Modern Treasury Credentials Bootstrap
+  app.post("/api/modern_treasury/credentials", firebaseAuthCheck, async (req, res) => {
+    try {
+      const { apiKey, organizationId } = req.body;
+      const userId = (req as any).user.uid;
       
-      const accounts = await mt.internalAccounts.list();
-      res.json(accounts.items);
+      if (!apiKey || !organizationId) {
+        return res.status(400).json({ error: "API Key and Organization ID are required" });
+      }
+
+      if (!astraDb) return res.status(500).json({ error: "Astra DB not initialized" });
+      const coll = astraDb.collection('application_credentials');
+      
+      await coll.updateOne(
+        { _id: `mt:${userId}` },
+        { 
+          $set: { 
+            apiKey, 
+            organizationId,
+            userId,
+            updatedAt: new Date().toISOString()
+          } 
+        },
+        { upsert: true }
+      );
+      
+      res.json({ success: true, message: "Modern Treasury credentials saved" });
     } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // Modern Treasury API Integration
+  app.get("/api/modern_treasury/accounts", firebaseAuthCheck, async (req, res) => {
+    try {
+      const userId = (req as any).user.uid;
+      const mt = await getMTClient(userId);
+      const accounts = [];
+      for await (const account of mt.internalAccounts.list()) {
+        accounts.push(account);
+      }
+      res.json(accounts);
+    } catch (error) {
+      if (error instanceof ModernTreasury.APIError) {
+        return res.status(error.status || 500).json({ 
+          error: error.message,
+          code: error.name,
+          status: error.status 
+        });
+      }
       console.error("Modern Treasury API Error:", error);
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/modern_treasury/counterparties", firebaseAuthCheck, async (req, res) => {
+    try {
+      const userId = (req as any).user.uid;
+      const mt = await getMTClient(userId);
+      const counterparties = [];
+      for await (const cp of mt.counterparties.list()) {
+        counterparties.push(cp);
+      }
+      res.json(counterparties);
+    } catch (error) {
+      if (error instanceof ModernTreasury.APIError) {
+        return res.status(error.status || 500).json({ error: error.message });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/modern_treasury/internal_accounts", firebaseAuthCheck, async (req, res) => {
+    try {
+      const userId = (req as any).user.uid;
+      const mt = await getMTClient(userId);
+      const accounts = [];
+      for await (const account of mt.internalAccounts.list()) {
+        accounts.push(account);
+      }
+      res.json(accounts);
+    } catch (error) {
+      if (error instanceof ModernTreasury.APIError) {
+        return res.status(error.status || 500).json({ error: error.message });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/modern_treasury/virtual_accounts", firebaseAuthCheck, async (req, res) => {
+    try {
+      const userId = (req as any).user.uid;
+      const mt = await getMTClient(userId);
+      const accounts = [];
+      for await (const account of mt.virtualAccounts.list()) {
+        accounts.push(account);
+      }
+      res.json(accounts);
+    } catch (error) {
+      if (error instanceof ModernTreasury.APIError) {
+        return res.status(error.status || 500).json({ error: error.message });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/modern_treasury/transactions", firebaseAuthCheck, async (req, res) => {
+    try {
+      const userId = (req as any).user.uid;
+      const mt = await getMTClient(userId);
+      const txs = [];
+      for await (const tx of mt.transactions.list()) {
+        txs.push(tx);
+      }
+      res.json(txs);
+    } catch (error) {
+      if (error instanceof ModernTreasury.APIError) {
+        return res.status(error.status || 500).json({ error: error.message });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/modern_treasury/ledger_accounts", firebaseAuthCheck, async (req, res) => {
+    try {
+      const userId = (req as any).user.uid;
+      const mt = await getMTClient(userId);
+      const accounts = [];
+      for await (const account of mt.ledgerAccounts.list()) {
+        accounts.push(account);
+      }
+      res.json(accounts);
+    } catch (error) {
+      if (error instanceof ModernTreasury.APIError) {
+        return res.status(error.status || 500).json({ error: error.message });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/modern_treasury/account_collection_flows", firebaseAuthCheck, async (req, res) => {
+    try {
+      const userId = (req as any).user.uid;
+      const mt = await getMTClient(userId);
+      const flow = await mt.accountCollectionFlows.create(req.body);
+      res.json(flow);
+    } catch (error) {
+      if (error instanceof ModernTreasury.APIError) {
+        return res.status(error.status || 500).json({ error: error.message });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/modern_treasury/payment_flows", firebaseAuthCheck, async (req, res) => {
+    try {
+      const userId = (req as any).user.uid;
+      const mt = await getMTClient(userId);
+      const flow = await mt.paymentFlows.create(req.body);
+      res.json(flow);
+    } catch (error) {
+      if (error instanceof ModernTreasury.APIError) {
+        return res.status(error.status || 500).json({ error: error.message });
+      }
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.post("/api/modern_treasury/payment_orders", firebaseAuthCheck, async (req, res) => {
+    try {
+      const userId = (req as any).user.uid;
+      const mt = await getMTClient(userId);
+      const { amount, currency, direction, originating_account_id, receiving_account_id, type, description } = req.body;
+      
+      if (!amount || !currency || !direction || !originating_account_id) {
+        return res.status(400).json({ error: "Missing required payment fields" });
+      }
+
+      console.log(`[MT] Creating payment order for user ${userId}: ${amount} ${currency} ${direction}`);
+      const paymentOrder = await mt.paymentOrders.create({
+        type: type || 'ach',
+        amount: Math.round(parseFloat(amount) * 100),
+        currency,
+        direction,
+        originating_account_id,
+        receiving_account_id: receiving_account_id || undefined,
+        description: description || 'Transfer',
+      });
+      res.json(paymentOrder);
+    } catch (error) {
+      if (error instanceof ModernTreasury.APIError) {
+        return res.status(error.status || 500).json({ error: error.message, details: (error as any).body?.errors });
+      }
       res.status(500).json({ error: String(error) });
     }
   });
@@ -321,113 +614,21 @@ async function startServer() {
     }
   });
 
-  app.get("/api/modern_treasury/counterparties", async (req, res) => {
-    try {
-      const mt = new ModernTreasury({
-        apiKey: process.env.MODERN_TREASURY_API_KEY!,
-        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
-      });
-      const counterparties = await mt.counterparties.list({ per_page: 25 });
-      res.json(counterparties.items);
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
-  app.get("/api/modern_treasury/internal_accounts", async (req, res) => {
-    try {
-      const mt = new ModernTreasury({
-        apiKey: process.env.MODERN_TREASURY_API_KEY!,
-        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
-      });
-      const accounts = await mt.internalAccounts.list({ per_page: 25 });
-      res.json(accounts.items);
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
-  app.get("/api/modern_treasury/virtual_accounts", async (req, res) => {
-    try {
-      const mt = new ModernTreasury({
-        apiKey: process.env.MODERN_TREASURY_API_KEY!,
-        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
-      });
-      const accounts = await mt.virtualAccounts.list({ per_page: 25 });
-      res.json(accounts.items);
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
-  app.get("/api/modern_treasury/transactions", async (req, res) => {
-    try {
-      const mt = new ModernTreasury({
-        apiKey: process.env.MODERN_TREASURY_API_KEY!,
-        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
-      });
-      const transactions = await mt.transactions.list({ per_page: 25 });
-      res.json(transactions.items);
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
-  app.get("/api/modern_treasury/ledger_accounts", async (req, res) => {
-    try {
-      const mt = new ModernTreasury({
-        apiKey: process.env.MODERN_TREASURY_API_KEY!,
-        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
-      });
-      const accounts = await mt.ledgerAccounts.list({ per_page: 25 });
-      res.json(accounts.items);
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
-  app.post("/api/modern_treasury/account_collection_flows", async (req, res) => {
-    try {
-      const mt = new ModernTreasury({
-        apiKey: process.env.MODERN_TREASURY_API_KEY!,
-        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
-      });
-      const flow = await mt.accountCollectionFlows.create(req.body);
-      res.json(flow);
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
-  app.post("/api/modern_treasury/payment_flows", async (req, res) => {
-    try {
-      const mt = new ModernTreasury({
-        apiKey: process.env.MODERN_TREASURY_API_KEY!,
-        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID!,
-      });
-      const flow = await mt.paymentFlows.create(req.body);
-      res.json(flow);
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
-
   app.post("/api/citi/accept-offer", async (req, res) => {
     try {
       const { applicationId, productCode } = req.body;
-      // Mock response based on the provided JSON structure
-      res.json({
+      const appKey = `citi:application:${applicationId}`;
+      const appData = {
         status: "00 OK",
         applicationStage: "APPROVAL",
-        ipaExpiryDate: "2018-10-20",
+        ipaExpiryDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         kbaRequiredFlag: "true",
         bureauPullExpiredFlag: "true",
-        requestedProductDecision: [],
-        counterOffers: [],
-        crossSellOffers: [],
-        suggestedOffers: [],
-        kbaQuestionnaire: { vedaQuestionnaire: [] }
-      });
+        requestedProductDecision: [{ productCode, decision: "APPROVED" }],
+        updatedAt: new Date().toISOString()
+      };
+      await redisClient.set(appKey, JSON.stringify(appData));
+      res.json(appData);
     } catch (error) {
       res.status(500).json({ error: String(error) });
     }
@@ -436,15 +637,23 @@ async function startServer() {
   app.post("/api/citi/add-product", async (req, res) => {
     try {
       const { applicationId, productCode } = req.body;
+      const appKey = `citi:application:${applicationId}`;
+      const existingApp = await redisClient.get(appKey);
+      const appData = existingApp ? JSON.parse(existingApp) : { applicationId };
+      
+      const productDetails = {
+        productCode: productCode,
+        addProductStatusDescription: "Success",
+        addedAt: new Date().toISOString()
+      };
+      
+      appData.productDetails = [...(appData.productDetails || []), productDetails];
+      await redisClient.set(appKey, JSON.stringify(appData));
+      
       res.json({
         status: "00 OK",
         applicationId: applicationId,
-        productDetails: [
-          {
-            productCode: productCode,
-            addProductStatusDescription: "Success"
-          }
-        ]
+        productDetails: [productDetails]
       });
     } catch (error) {
       res.status(500).json({ error: String(error) });
@@ -452,21 +661,19 @@ async function startServer() {
   });
 
   // Modern Treasury Ledgers Integration
-  app.get("/api/modern_treasury/ledgers", async (req, res) => {
+  app.get("/api/modern_treasury/ledgers", firebaseAuthCheck, async (req, res) => {
     try {
-      if (!process.env.MODERN_TREASURY_API_KEY || !process.env.MODERN_TREASURY_ORGANIZATION_ID) {
-        return res.status(500).json({ error: "Modern Treasury credentials not configured" });
+      const userId = (req as any).user.uid;
+      const mt = await getMTClient(userId);
+      const ledgers = [];
+      for await (const ledger of mt.ledgers.list()) {
+        ledgers.push(ledger);
       }
-
-      const mt = new ModernTreasury({
-        apiKey: process.env.MODERN_TREASURY_API_KEY,
-        organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID,
-      });
-      
-      const ledgers = await mt.ledgers.list();
-      res.json(ledgers.items);
+      res.json(ledgers);
     } catch (error) {
-      console.error("Modern Treasury Ledger API Error:", error);
+      if (error instanceof ModernTreasury.APIError) {
+        return res.status(error.status || 500).json({ error: error.message });
+      }
       res.status(500).json({ error: String(error) });
     }
   });
@@ -475,7 +682,7 @@ async function startServer() {
   app.get("/api/auth/login", async (req, res) => {
     const { service, userId } = req.query;
     const appUrl = process.env.APP_URL || `https://${req.get('host')}`;
-    const redirectUri = 'https://operationsavetheworld.firebaseapp.com/__/auth/handler';
+    const redirectUri = `${appUrl}/auth/callback`;
     const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
 
     if (service === 'stripe') {
@@ -501,97 +708,146 @@ async function startServer() {
     }
 
     if (service === 'aibanking') {
-      const keyId = process.env.AIBANKING_KEY_ID;
-      try {
-        const parParams = new URLSearchParams({
-          response_type: 'code',
-          client_id: clientId,
-          redirect_uri: redirectUri,
-          scope: 'openid profile email offline_access',
-          audience: 'https://auth.aibanking.dev/userinfo',
-          state: JSON.stringify({ service, userId })
-        });
-
-        if (keyId) {
-          parParams.append('key_id', keyId);
-        }
-
-        const parResponse = await axios.post('https://mtls.auth.aibanking.dev/oauth/par', 
-          parParams,
-          {
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            httpsAgent
-          }
-        );
-
-        if (parResponse.status === 201 || parResponse.status === 200) {
-          const { request_uri } = parResponse.data;
-          return res.redirect(`https://auth.aibanking.dev/authorize?request_uri=${request_uri}&client_id=${clientId}`);
-        }
-        throw new Error(`PAR failed with status ${parResponse.status}`);
-      } catch (error: any) {
-        console.error('PAR Error Details:', JSON.stringify(error.response?.data, null, 2));
-        return res.status(500).send(`PAR authentication failed: ${JSON.stringify(error.response?.data)}`);
-      }
+      const loginUrl = 'https://auth.aibanking.dev/samlp/zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY?connection=aibanking';
+      return res.redirect(loginUrl);
     }
 
     res.status(400).send('Invalid service');
   });
 
-  // AI Banking Authentication
-  app.get("/api/auth/aibanking/login", async (req, res) => {
-    const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
-    const redirectUri = 'https://operationsavetheworld.firebaseapp.com/__/auth/handler';
-    const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
-    
-    const params = new URLSearchParams({
-      response_type: 'code',
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      scope: 'openid profile email',
-      audience: 'https://auth.aibanking.dev/userinfo',
-      state: 'login'
-    });
-    
-    res.redirect(`https://auth.aibanking.dev/authorize?${params}`);
+  // Redis Test Endpoint
+  app.get("/api/redis/test", async (req, res) => {
+    try {
+      await redisClient.set('foo', 'bar');
+      const result = await redisClient.get('foo');
+      res.json({ success: true, result });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
   });
 
-  app.get("/api/auth/aibanking/callback", async (req, res) => {
-    const { code, error } = req.query;
-    if (error) return res.status(400).send(`Auth failed: ${error}`);
-    if (!code) return res.status(400).send("Missing code");
-
+  // Astra DB Test Endpoint
+  app.get("/api/astra/test", async (req, res) => {
     try {
-      const clientId = process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY';
-      const clientSecret = process.env.AIBANKING_CLIENT_SECRET;
-      const redirectUri = 'https://operationsavetheworld.firebaseapp.com/__/auth/handler';
-
-      const tokenResponse = await axios.post('https://auth.aibanking.dev/oauth/token', 
-        new URLSearchParams({
-          grant_type: 'authorization_code',
-          client_id: clientId,
-          client_secret: clientSecret!,
-          code: code as string,
-          redirect_uri: redirectUri
-        }),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-      );
-
-      const { id_token } = tokenResponse.data;
-      
-      // Decode id_token to get user info (or call userinfo endpoint)
-      // For now, let's assume we can get the user's email/id from the token
-      // In a real app, you'd verify the token and get the user's ID
-      const userEmail = 'user@aibanking.dev'; // Placeholder
-      const userId = 'aibanking_user_123'; // Placeholder
-
-      // Generate Firebase Custom Token
-      const customToken = await admin.auth().createCustomToken(userId);
-
-      res.redirect(`${process.env.APP_URL || `https://${req.get('host')}`}/dashboard?token=${customToken}`);
+      if (!astraDb) {
+        return res.status(500).json({ error: "Astra DB not initialized. Check ASTRA_DB_APPLICATION_TOKEN." });
+      }
+      const colls = await astraDb.listCollections();
+      res.json({ success: true, collections: colls });
     } catch (error) {
-      console.error('Auth callback error:', error);
-      res.status(500).send("Auth failed");
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // Bootstrap credentials to Astra DB
+  app.post("/api/astra/bootstrap-creds", async (req, res) => {
+    try {
+      if (!astraDb) return res.status(500).json({ error: "Astra DB not initialized" });
+      const { app_id, client_id, client_secret, private_key_pem, key_id, scim_token, login_url, redirect_uri } = req.body;
+      const coll = astraDb.collection('application_credentials');
+      
+      await coll.updateOne(
+        { _id: app_id },
+        { 
+          $set: { 
+            client_id, 
+            client_secret, 
+            private_key_pem, 
+            key_id,
+            scim_token,
+            login_url,
+            redirect_uri,
+            last_updated: new Date().toISOString()
+          } 
+        },
+        { upsert: true }
+      );
+      
+      res.json({ success: true, message: `Credentials for ${app_id} saved to Astra DB` });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  // ============================================================================
+  // FDX Money Movement Implementation (Astra DB)
+  // ============================================================================
+  
+  const INITIAL_PAYEES = [
+    {
+      _id: "payee-1",
+      payeeId: "payee-1",
+      merchant: {
+        displayName: "Verizon Wireless",
+        name: { company: "Verizon" },
+        address: { line1: "123 Main St", city: "New York", region: "NY", postalCode: "10001" },
+        phone: { type: "BUSINESS", country: "1", number: "8009220204" }
+      },
+      merchantAccountIds: ["88888"],
+      status: "ACTIVE"
+    },
+    {
+      _id: "payee-2",
+      payeeId: "payee-2",
+      merchant: {
+        displayName: "Con Edison",
+        name: { company: "ConEd" },
+        address: { line1: "4 Irving Pl", city: "New York", region: "NY", postalCode: "10003" }
+      },
+      merchantAccountIds: ["99999"],
+      status: "ACTIVE"
+    }
+  ];
+
+  async function initAstraFDX() {
+    if (!astraDb) return;
+    try {
+      const colls = await astraDb.listCollections();
+      if (!colls.some((c: any) => c.name === 'fdx_payees')) {
+        try {
+          const coll = await astraDb.createCollection('fdx_payees');
+          await coll.insertMany(INITIAL_PAYEES);
+          console.log('Initialized FDX payees in Astra DB');
+        } catch (createErr: any) {
+          if (!createErr.message?.includes('already exists')) {
+             console.error('Error creating fdx_payees collection:', createErr);
+          }
+        }
+      }
+      if (!colls.some((c: any) => c.name === 'fdx_payments')) {
+        try {
+          await astraDb.createCollection('fdx_payments');
+        } catch (createErr: any) {
+          if (!createErr.message?.includes('already exists')) {
+             console.error('Error creating fdx_payments collection:', createErr);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Astra FDX Init Error:', err);
+    }
+  }
+  initAstraFDX();
+
+  app.get("/api/billmgmt/billpay/v2/fdx/v6/payees", async (req, res) => {
+    try {
+      if (!astraDb) return res.json({ payees: INITIAL_PAYEES });
+      const coll = astraDb.collection('fdx_payees');
+      const payees = await coll.find({}).toArray();
+      res.json({ payees });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
+    }
+  });
+
+  app.get("/api/billmgmt/billpay/v2/fdx/v6/payments", async (req, res) => {
+    try {
+      if (!astraDb) return res.json({ payments: [] });
+      const coll = astraDb.collection('fdx_payments');
+      const payments = await coll.find({}).toArray();
+      res.json({ payments });
+    } catch (error) {
+      res.status(500).json({ error: String(error) });
     }
   });
 
@@ -613,12 +869,12 @@ async function startServer() {
       const stateStr = typeof state === 'string' ? state : JSON.stringify(state);
       const { service, userId } = JSON.parse(stateStr);
       
-      let accessToken = `mock_${service}_access_token_${Math.random().toString(36).substring(7)}`;
-      let refreshToken = `mock_${service}_refresh_token_${Math.random().toString(36).substring(7)}`;
+      let accessToken = '';
+      let refreshToken = '';
       let externalAccountId = '';
 
       const appUrl = process.env.APP_URL || `https://${req.get('host')}`;
-      const redirectUri = 'https://operationsavetheworld.firebaseapp.com/__/auth/handler';
+      const redirectUri = `${appUrl}/auth/callback`;
 
       if (service === 'stripe') {
         const tokenResponse = await fetch('https://connect.stripe.com/oauth/token', {
@@ -634,10 +890,12 @@ async function startServer() {
         if (tokenResponse.ok) {
           const data = await tokenResponse.json();
           accessToken = data.access_token;
-          refreshToken = data.refresh_token || refreshToken;
+          refreshToken = data.refresh_token;
           externalAccountId = data.stripe_user_id || '';
         } else {
-          console.error('Stripe Token Exchange Failed:', await tokenResponse.text());
+          const errorText = await tokenResponse.text();
+          console.error('Stripe Token Exchange Failed:', errorText);
+          return res.status(400).send(`Stripe authentication failed: ${errorText}`);
         }
       } else if (service === 'citi') {
         const tokenResponse = await axios.post('https://partner.citi.com/gcgapi/sandbox/prod/openapi/iam/tokenManagement/partner/authCode/oauth2/cgw/v1/token/us/cgw',
@@ -657,35 +915,41 @@ async function startServer() {
         accessToken = data.access_token;
         refreshToken = data.refresh_token;
       } else if (service === 'aibanking') {
-        try {
-          const tokenParams: any = {
-            grant_type: 'authorization_code',
-            client_id: process.env.AIBANKING_CLIENT_ID || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY',
-            code: code,
-            redirect_uri: redirectUri
-          };
+        const creds = await getAppCredentials('aibanking');
+        const tokenParams: any = {
+          grant_type: 'authorization_code',
+          client_id: creds?.client_id || 'zt6OsWvRgUtQsISRILfGFr7XhxwC6JgY',
+          code: code,
+          redirect_uri: redirectUri
+        };
 
-          if (process.env.AIBANKING_KEY_ID) {
-            tokenParams.key_id = process.env.AIBANKING_KEY_ID;
+        if (creds?.key_id) {
+          tokenParams.key_id = creds.key_id;
+        }
+
+        const tokenResponse = await axios.post('https://mtls.auth.aibanking.dev/oauth/token', 
+          new URLSearchParams(tokenParams),
+          {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            httpsAgent
           }
+        );
 
-          const tokenResponse = await axios.post('https://mtls.auth.aibanking.dev/oauth/token', 
-            new URLSearchParams(tokenParams),
-            {
-              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-              httpsAgent
-            }
-          );
-
-          if (tokenResponse.status === 200) {
-            const data = tokenResponse.data;
-            accessToken = data.access_token;
-            refreshToken = data.refresh_token || refreshToken;
-          }
-        } catch (error: any) {
-          console.error('AI Banking Token Exchange Failed:', error.response?.data || error.message);
+        if (tokenResponse.status === 200) {
+          const data = tokenResponse.data;
+          accessToken = data.access_token;
+          refreshToken = data.refresh_token;
+        } else {
+          throw new Error(`AI Banking token exchange failed with status ${tokenResponse.status}`);
         }
       }
+
+      if (!accessToken) {
+        throw new Error(`Failed to obtain access token for ${service}`);
+      }
+      
+      // Store tokens in Redis for the user
+      await redisClient.hSet(`user:${userId}:tokens`, service, JSON.stringify({ accessToken, refreshToken, externalAccountId, linkedAt: new Date().toISOString() }));
       
       res.send(`
         <html>
@@ -718,216 +982,6 @@ async function startServer() {
     }
   });
 
-  // ============================================================================
-  // SCIM Provisioning Implementation
-  // Maps SCIM v2 attributes to Auth0 profile attributes as requested
-  // ============================================================================
-  
-  const AUTH0_SCIM_URL = 'https://auth.aibanking.dev/scim/v2/connections/con_KmWlzuo4fspYtX2u/Users';
-
-  // 1. Endpoint to RECEIVE SCIM requests and map them to Auth0 format
-  app.post('/api/scim/v2/Users', async (req, res) => {
-    try {
-      const scimUser = req.body;
-      const auth0User: any = { app_metadata: {} };
-      
-      // Apply the exact SCIM -> Auth0 mapping
-      if (scimUser.userName) auth0User.username = scimUser.userName;
-      
-      const primaryEmail = scimUser.emails?.find((e: any) => e.primary)?.value || scimUser.emails?.[0]?.value;
-      if (primaryEmail) auth0User.email = primaryEmail;
-      
-      if (scimUser.externalId) auth0User.app_metadata.external_id = scimUser.externalId;
-      if (scimUser.active !== undefined) auth0User.blocked = !scimUser.active;
-      if (scimUser.displayName) auth0User.name = scimUser.displayName;
-      if (scimUser.name?.givenName) auth0User.given_name = scimUser.name.givenName;
-      if (scimUser.name?.familyName) auth0User.family_name = scimUser.name.familyName;
-      if (scimUser.nickName) auth0User.nickname = scimUser.nickName;
-      
-      const photo = scimUser.photos?.find((p: any) => p.type === 'photo')?.value || scimUser.photos?.[0]?.value;
-      if (photo) auth0User.picture = photo;
-      
-      const workPhone = scimUser.phoneNumbers?.find((p: any) => p.type === 'work')?.value;
-      if (workPhone) auth0User.app_metadata.work_phone_number = workPhone;
-      
-      const homePhone = scimUser.phoneNumbers?.find((p: any) => p.type === 'home')?.value;
-      if (homePhone) auth0User.app_metadata.home_phone_number = homePhone;
-      
-      const mobilePhone = scimUser.phoneNumbers?.find((p: any) => p.type === 'mobile')?.value;
-      if (mobilePhone) auth0User.app_metadata.mobile_phone_number = mobilePhone;
-      
-      const workAddress = scimUser.addresses?.find((a: any) => a.type === 'work');
-      if (workAddress) {
-        if (workAddress.streetAddress) auth0User.app_metadata.street_address = workAddress.streetAddress;
-        if (workAddress.locality) auth0User.app_metadata.city = workAddress.locality;
-        if (workAddress.region) auth0User.app_metadata.state = workAddress.region;
-        if (workAddress.postalCode) auth0User.app_metadata.postal_code = workAddress.postalCode;
-        if (workAddress.formatted) auth0User.app_metadata.postal_address = workAddress.formatted;
-        if (workAddress.country) auth0User.app_metadata.country = workAddress.country;
-      }
-      
-      if (scimUser.profileUrl) auth0User.app_metadata.profile_url = scimUser.profileUrl;
-      if (scimUser.userType) auth0User.app_metadata.user_type = scimUser.userType;
-      if (scimUser.title) auth0User.app_metadata.title = scimUser.title;
-      if (scimUser.preferredLanguage) auth0User.app_metadata.language = scimUser.preferredLanguage;
-      if (scimUser.locale) auth0User.app_metadata.locale = scimUser.locale;
-      if (scimUser.timezone) auth0User.app_metadata.timezone = scimUser.timezone;
-      if (scimUser.entitlements) auth0User.app_metadata.entitlements = scimUser.entitlements;
-      if (scimUser.roles) auth0User.app_metadata.roles = scimUser.roles;
-      
-      const enterprise = scimUser['urn:ietf:params:scim:schemas:extension:enterprise:2.0:User'];
-      if (enterprise) {
-        if (enterprise.employeeNumber) auth0User.app_metadata.employee_id = enterprise.employeeNumber;
-        if (enterprise.costCenter) auth0User.app_metadata.cost_center = enterprise.costCenter;
-        if (enterprise.organization) auth0User.app_metadata.organization = enterprise.organization;
-        if (enterprise.division) auth0User.app_metadata.division = enterprise.division;
-        if (enterprise.department) auth0User.app_metadata.department = enterprise.department;
-        if (enterprise.manager) auth0User.app_metadata.manager = enterprise.manager;
-      }
-
-      console.log("Mapped SCIM User to Auth0 format:", auth0User);
-      
-      // Return standard SCIM response
-      const scimToken = process.env.AUTH0_SCIM_TOKEN;
-      if (!scimToken) {
-        return res.status(500).json({ error: 'AUTH0_SCIM_TOKEN environment variable is required' });
-      }
-
-      // Send to Auth0 SCIM endpoint
-      const response = await axios.post(AUTH0_SCIM_URL, auth0User, {
-        headers: {
-          'Authorization': `Bearer ${scimToken}`,
-          'Content-Type': 'application/scim+json'
-        }
-      });
-
-      res.status(201).json({
-        ...scimUser,
-        id: response.data.id || auth0User.app_metadata.external_id || `usr_${Date.now()}`,
-        meta: {
-          resourceType: "User",
-          created: new Date().toISOString(),
-          lastModified: new Date().toISOString()
-        }
-      });
-    } catch (error) {
-      console.error('SCIM receive error:', error);
-      res.status(500).json({ schemas: ["urn:ietf:params:scim:api:messages:2.0:Error"], detail: String(error), status: "500" });
-    }
-  });
-
-  // 2. Endpoint to PUSH a local user to the Auth0 SCIM Connection
-  app.post('/api/scim/push-to-auth0', async (req, res) => {
-    try {
-      const { user } = req.body; // Local user object
-      
-      // Construct SCIM payload based on the reverse of the mapping
-      const scimPayload = {
-        schemas: ["urn:ietf:params:scim:schemas:core:2.0:User", "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User"],
-        userName: user.username || user.email,
-        emails: [{ primary: true, value: user.email }],
-        externalId: user.uid || user.id,
-        active: !user.blocked,
-        displayName: user.name || user.displayName,
-        name: {
-          givenName: user.given_name || user.displayName?.split(' ')[0] || '',
-          familyName: user.family_name || user.displayName?.split(' ').slice(1).join(' ') || ''
-        }
-      };
-
-      const scimToken = process.env.AUTH0_SCIM_TOKEN;
-      if (!scimToken) {
-        return res.status(500).json({ error: 'AUTH0_SCIM_TOKEN environment variable is required' });
-      }
-
-      // Send to Auth0 SCIM endpoint
-      const response = await axios.post(AUTH0_SCIM_URL, scimPayload, {
-        headers: {
-          'Authorization': `Bearer ${scimToken}`,
-          'Content-Type': 'application/scim+json'
-        }
-      });
-
-      res.status(200).json(response.data);
-    } catch (error) {
-      console.error('SCIM push error:', error);
-      res.status(500).json({ error: 'Failed to push user to Auth0' });
-    }
-  });
-
-  // ============================================================================
-  // FDX Money Movement Implementation
-  // ============================================================================
-  
-  const mockPayees = [
-    {
-      payeeId: "payee-1",
-      merchant: {
-        displayName: "Verizon Wireless",
-        name: { company: "Verizon" },
-        address: { line1: "123 Main St", city: "New York", region: "NY", postalCode: "10001" },
-        phone: { type: "BUSINESS", country: "1", number: "8009220204" }
-      },
-      merchantAccountIds: ["88888"],
-      status: "ACTIVE"
-    },
-    {
-      payeeId: "payee-2",
-      merchant: {
-        displayName: "Con Edison",
-        name: { company: "ConEd" },
-        address: { line1: "4 Irving Pl", city: "New York", region: "NY", postalCode: "10003" }
-      },
-      merchantAccountIds: ["99999"],
-      status: "ACTIVE"
-    }
-  ];
-
-  const mockPayments = [
-    {
-      paymentId: "pmt-1",
-      fromAccountId: "acc-123",
-      toPayeeId: "payee-1",
-      amount: 125.50,
-      dueDate: "2026-04-01",
-      status: "SCHEDULED"
-    },
-    {
-      paymentId: "pmt-2",
-      fromAccountId: "acc-123",
-      toPayeeId: "payee-2",
-      amount: 85.20,
-      dueDate: "2026-03-20",
-      status: "PROCESSED",
-      processedTimestamp: "2026-03-15T10:00:00Z"
-    }
-  ];
-
-  const mockRecurringPayments = [
-    {
-      recurringPaymentId: "rec-1",
-      fromAccountId: "acc-123",
-      toPayeeId: "payee-1",
-      amount: 125.50,
-      frequency: "MONTHLY",
-      duration: { type: "NOEND" },
-      dueDate: "2026-04-01",
-      status: "SCHEDULED"
-    }
-  ];
-
-  app.get("/api/billmgmt/billpay/v2/fdx/v6/payees", (req, res) => {
-    res.json({ payees: mockPayees });
-  });
-
-  app.get("/api/billmgmt/billpay/v2/fdx/v6/payments", (req, res) => {
-    res.json({ payments: mockPayments });
-  });
-
-  app.get("/api/billmgmt/billpay/v2/fdx/v6/recurring-payments", (req, res) => {
-    res.json({ recurringPayments: mockRecurringPayments });
-  });
-
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -948,4 +1002,7 @@ async function startServer() {
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("CRITICAL: Server failed to start!", err);
+  process.exit(1);
+});

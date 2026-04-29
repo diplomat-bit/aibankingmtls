@@ -1,19 +1,12 @@
 @import "tailwindcss";
 
-@layer utilities {
-  .scrollbar-hide::-webkit-scrollbar {
-    display: none;
-  }
-  .scrollbar-hide {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
+:root {
+  --font-sans: 'Inter', system-ui, sans-serif;
 }
 
 body {
-  @apply bg-[#0A0A0A] text-white antialiased;
-}
-
-::selection {
-  @apply bg-emerald-500/30 text-emerald-200;
+  margin: 0;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }

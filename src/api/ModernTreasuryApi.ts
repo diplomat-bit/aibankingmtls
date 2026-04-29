@@ -1,116 +1,31 @@
-import * as runtime from '../../runtime';
 
-export interface ModernTreasuryResource {
-    id: string;
-    [key: string]: any;
-}
+export class ModernTreasuryApi {
+  private accessToken: string;
+  
+  constructor(options: { accessToken: string }) {
+    this.accessToken = options.accessToken;
+  }
 
-export interface CreateAccountCollectionFlowRequest {
-    counterparty_id: string;
-    payment_types: string[];
-    receiving_countries: string[];
-}
+  async saveCredentials(creds: { apiKey: string, organizationId: string }) {
+    const response = await fetch('/api/modern_treasury/credentials', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.accessToken}`
+      },
+      body: JSON.stringify(creds)
+    });
+    if (!response.ok) throw new Error('Failed to save credentials');
+    return await response.json();
+  }
 
-export interface CreatePaymentFlowRequest {
-    counterparty_id: string;
-    amount: number;
-    currency: string;
-    direction: string;
-    originating_account_id: string;
-}
-
-export class ModernTreasuryApi extends runtime.BaseAPI {
-    async getCounterparties(): Promise<ModernTreasuryResource[]> {
-        const response = await this.request({
-            path: `/api/modern_treasury/counterparties`,
-            method: 'GET',
-            headers: {},
-        });
-        return await response.json();
-    }
-
-    async getInternalAccounts(): Promise<ModernTreasuryResource[]> {
-        const response = await this.request({
-            path: `/api/modern_treasury/internal_accounts`,
-            method: 'GET',
-            headers: {},
-        });
-        return await response.json();
-    }
-
-    async getAccounts(): Promise<ModernTreasuryResource[]> {
-        const response = await this.request({
-            path: `/api/modern_treasury/accounts`,
-            method: 'GET',
-            headers: {},
-        });
-        return await response.json();
-    }
-
-    async getVirtualAccounts(): Promise<ModernTreasuryResource[]> {
-        const response = await this.request({
-            path: `/api/modern_treasury/virtual_accounts`,
-            method: 'GET',
-            headers: {},
-        });
-        return await response.json();
-    }
-
-    async createAccountCollectionFlow(request: CreateAccountCollectionFlowRequest): Promise<{ client_token: string }> {
-        const response = await this.request({
-            path: `/api/modern_treasury/account_collection_flows`,
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: request,
-        });
-        return await response.json();
-    }
-
-    async createPaymentFlow(request: CreatePaymentFlowRequest): Promise<{ client_token: string }> {
-        const response = await this.request({
-            path: `/api/modern_treasury/payment_flows`,
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: request,
-        });
-        return await response.json();
-    }
-
-    async createPaymentOrder(request: {
-        amount: number;
-        currency: string;
-        direction: string;
-        originating_account_id: string;
-        receiving_account_id?: string;
-        type?: string;
-        description?: string;
-    }): Promise<ModernTreasuryResource> {
-        const response = await this.request({
-            path: `/api/modern_treasury/payment_orders`,
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: request,
-        });
-        return await response.json();
-    }
-
-    async saveCredentials(request: { apiKey: string; organizationId: string }): Promise<{ success: boolean }> {
-        const response = await this.request({
-            path: `/api/modern_treasury/credentials`,
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: request,
-        });
-        return await response.json();
-    }
-
-    async createConnection(request: { entity_id: string; nickname?: string }): Promise<ModernTreasuryResource> {
-        const response = await this.request({
-            path: `/api/modern_treasury/connections`,
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: request,
-        });
-        return await response.json();
-    }
+  async getInternalAccounts() {
+    const response = await fetch('/api/modern_treasury/accounts', {
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`
+      }
+    });
+    if (!response.ok) throw new Error('Failed to fetch accounts');
+    return await response.json();
+  }
 }

@@ -39,44 +39,71 @@ export default function App() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<'dashboard' | 'web3' | 'advisor'>('dashboard');
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-      setUser(firebaseUser);
-      if (firebaseUser) {
-        const userRef = doc(db, 'users', firebaseUser.uid);
-        const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) {
-          const newProfile: UserProfile = {
-            uid: firebaseUser.uid,
-            displayName: firebaseUser.displayName,
-            email: firebaseUser.email,
-            photoURL: firebaseUser.photoURL,
-            createdAt: new Date().toISOString(),
-          };
-          await setDoc(userRef, newProfile);
-          setProfile(newProfile);
-        } else {
-          setProfile(userSnap.data() as UserProfile);
+      try {
+        setUser(firebaseUser);
+        if (firebaseUser) {
+          const userRef = doc(db, 'users', firebaseUser.uid);
+          const userSnap = await getDoc(userRef);
+          if (!userSnap.exists()) {
+            const newProfile: UserProfile = {
+              uid: firebaseUser.uid,
+              displayName: firebaseUser.displayName,
+              email: firebaseUser.email,
+              photoURL: firebaseUser.photoURL,
+              createdAt: new Date().toISOString(),
+            };
+            await setDoc(userRef, newProfile);
+            setProfile(newProfile);
+          } else {
+            setProfile(userSnap.data() as UserProfile);
+          }
+
+          // Listen for accounts
+          const qAccounts = query(collection(db, 'accounts'), where('userId', '==', firebaseUser.uid));
+          onSnapshot(qAccounts, (snapshot) => {
+            setAccounts(snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Account)));
+          }, (err) => {
+            console.error("Firestore accounts snapshot error:", err);
+          });
+
+          // Listen for transactions
+          const qTx = query(collection(db, 'transactions'), where('userId', '==', firebaseUser.uid), orderBy('date', 'desc'), limit(10));
+          onSnapshot(qTx, (snapshot) => {
+            setTransactions(snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Transaction)));
+          }, (err) => {
+            console.error("Firestore transactions snapshot error:", err);
+          });
         }
-
-        // Listen for accounts
-        const qAccounts = query(collection(db, 'accounts'), where('userId', '==', firebaseUser.uid));
-        onSnapshot(qAccounts, (snapshot) => {
-          setAccounts(snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Account)));
-        });
-
-        // Listen for transactions
-        const qTx = query(collection(db, 'transactions'), where('userId', '==', firebaseUser.uid), orderBy('date', 'desc'), limit(10));
-        onSnapshot(qTx, (snapshot) => {
-          setTransactions(snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Transaction)));
-        });
+      } catch (err) {
+        console.error("Auth initialization error:", err);
+        setError(err instanceof Error ? err.message : "Failed to load user profile");
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
     return () => unsubscribeAuth();
   }, []);
+
+  const handleSignIn = async () => {
+    try {
+      setError(null);
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    } catch (err: any) {
+      console.error("Sign in error:", err);
+      if (err.code === 'auth/popup-blocked') {
+        setError("Sign-in popup was blocked by your browser. Please allow popups for this site.");
+      } else if (err.code === 'auth/unauthorized-domain') {
+        setError("This domain is not authorized for sign-in. Please contact the administrator.");
+      } else {
+        setError(err.message || "An unexpected error occurred during sign-in.");
+      }
+    }
+  };
 
   if (loading) return <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">Loading...</div>;
 
@@ -84,9 +111,16 @@ export default function App() {
     return (
       <div className="min-h-screen bg-[#0A0A0A] flex flex-col items-center justify-center p-4">
         <h1 className="text-4xl font-bold mb-8">Aura AI Bank</h1>
+        
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/50 text-red-500 px-4 py-3 rounded-xl mb-6 max-w-md text-center">
+            {error}
+          </div>
+        )}
+
         <button 
-          onClick={() => signInWithPopup(auth, new GoogleAuthProvider())}
-          className="bg-white text-black px-8 py-3 rounded-2xl font-bold flex items-center gap-2"
+          onClick={handleSignIn}
+          className="bg-white text-black px-8 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-zinc-200 transition-colors"
         >
           <Globe className="w-5 h-5" />
           Sign in with Google

@@ -120,6 +120,11 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Health check
+  app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', time: new Date().toISOString() });
+  });
+
   // Stripe Webhook
   app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
     res.json({ received: true });

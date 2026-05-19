@@ -1,118 +1,24 @@
-import express from "express";
-import { createServer as createViteServer } from "vite";
-import path from "path";
-import { fileURLToPath } from "url";
-import dotenv from "dotenv";
-import Stripe from "stripe";
-import ModernTreasury from "modern-treasury";
-import axios from "axios";
-import https from "https";
-import admin from "firebase-admin";
-import firebaseConfig from "./firebase-applet-config.json" assert { type: "json" };
-import { plaidService } from "./services/plaidService";
-import { blockchainService } from "./services/blockchainService";
-import { ledgerService } from "./services/ledgerService";
-import webpush from "web-push";
-import { createClient } from 'redis';
-import { DataAPIClient } from "@datastax/astra-db-ts";
+import express from 'express';
+import { createServer as createViteServer } from 'vite';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { GoogleGenAI } from "@google/genai";
+import dotenv from 'dotenv';
+import axios from 'axios';
 
 dotenv.config();
-
-// Redis Setup
-const redisHost = process.env.REDIS_HOST;
-const redisPassword = process.env.REDIS_PASSWORD;
-const redisUrl = (redisHost && redisHost.startsWith('redis://')) 
-  ? redisHost 
-  : undefined;
-
-const redisClient = createClient(
-  redisUrl 
-    ? { url: redisUrl }
-    : {
-        username: 'default',
-        password: redisPassword || 'REDIS_PASSWORD',
-        socket: {
-          host: redisHost || 'REDIS_HOST',
-          port: 16615
-        }
-      }
-);
-
-redisClient.on('error', err => console.log('Redis Client Error', err));
-
-async function startRedis() {
-  try {
-    await redisClient.connect();
-    console.log('Redis Connected');
-  } catch (err) {
-    console.error('Redis Connection Error:', err);
-  }
-}
-
-startRedis();
-
-// Astra DB Setup
-const astraToken = process.env.ASTRA_DB_APPLICATION_TOKEN;
-const astraEndpoint = process.env.ASTRA_DB_ENDPOINT || 'https://77baf575-a343-4100-a319-14042f368fb6-us-east1.apps.astra.datastax.com';
-
-let astraDb: any = null;
-
-if (astraToken) {
-  const astraClient = new DataAPIClient();
-  astraDb = astraClient.db(astraEndpoint, { token: astraToken });
-  
-  (async () => {
-    try {
-      const colls = await astraDb.listCollections();
-      const hasCreds = colls.some((c: any) => c.name === 'application_credentials');
-      if (!hasCreds) {
-        await astraDb.createCollection('application_credentials');
-      }
-    } catch (err) {
-      console.error('AstraDB Connection Error:', err);
-    }
-  })();
-}
-
-async function getAppCredentials(appId: string) {
-  if (!astraDb) return null;
-  const coll = astraDb.collection('application_credentials');
-  return await coll.findOne({ _id: appId });
-}
-
-// Push Notification Setup
-const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
-const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
-
-if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails('mailto:sovereignties3@gmail.com', VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
-}
-
-// Initialize Firebase Admin
-process.env.GOOGLE_CLOUD_PROJECT = firebaseConfig.projectId;
-admin.initializeApp({
-  projectId: firebaseConfig.projectId,
-});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Firebase Auth Middleware
-const firebaseAuthCheck = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized' });
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY || "",
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    }
   }
-
-  const idToken = authHeader.split('Bearer ')[1];
-  try {
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
-    (req as any).user = decodedToken;
-    next();
-  } catch (error) {
-    res.status(401).json({ error: 'Unauthorized' });
-  }
-};
+});
 
 async function startServer() {
   const app = express();
@@ -120,104 +26,178 @@ async function startServer() {
 
   app.use(express.json());
 
-  // Health check
+  // API Routes
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', time: new Date().toISOString() });
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
-  // Stripe Webhook
-  app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
-    res.json({ received: true });
-  });
-
-  // Stripe Checkout Session
-  app.post("/api/checkout/create-session", async (req, res) => {
+  // Gemini Advisor Endpoint
+  app.post('/api/gemini/advisor', async (req, res) => {
     try {
-      const { priceId, quantity } = req.body;
-      const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, { apiVersion: '2023-10-16' as any });
-      const session = await stripe.checkout.sessions.create({
-        payment_method_types: ['card'],
-        line_items: [{ price: priceId, quantity: quantity || 1 }],
-        mode: 'payment',
-        success_url: `${process.env.APP_URL}/success`,
-        cancel_url: `${process.env.APP_URL}/cancel`,
+      const { userMessage, transactions, accounts } = req.body;
+      
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        config: {
+          systemInstruction: `You are Aura, an intelligent financial advisor for Aura AI Bank. 
+          You have access to the user's accounts and recent transactions.
+          Provide concise, helpful, and personalized financial advice.
+          Be professional yet approachable.
+          
+          Current Accounts: ${JSON.stringify(accounts)}
+          Recent Transactions: ${JSON.stringify(transactions)}
+          
+          Note: You are part of a sophisticated banking platform that supports over 2,200 financial data models, including integrations with Plaid, Stripe, Modern Treasury, and Citi.`,
+        },
+        contents: userMessage,
       });
-      res.json({ id: session.id });
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
+
+      res.json({ text: response.text });
+    } catch (error: any) {
+      console.error("Gemini Advisor Error:", error);
+      res.status(500).json({ error: error.message });
     }
   });
 
-  // Modern Treasury API Integration
-  async function getMTClient(userId: string) {
-    if (userId && astraDb) {
-      const coll = astraDb.collection('application_credentials');
-      const creds = await coll.findOne({ _id: `mt:${userId}` });
-      if (creds && creds.apiKey && creds.organizationId) {
-        return new ModernTreasury({ apiKey: creds.apiKey, organizationID: creds.organizationId });
-      }
+  // Gemini Categorization Endpoint
+  app.post('/api/gemini/categorize', async (req, res) => {
+    try {
+      const { description } = req.body;
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        config: {
+          systemInstruction: "Categorize the following bank transaction description into one of these categories: Food, Transport, Utilities, Entertainment, Shopping, Health, Income, Other. Return only the category name.",
+        },
+        contents: description,
+      });
+
+      res.json({ category: response.text?.trim() || "Other" });
+    } catch (error: any) {
+      console.error("Gemini Categorization Error:", error);
+      res.status(500).json({ error: error.message });
     }
-    if (process.env.MODERN_TREASURY_API_KEY && process.env.MODERN_TREASURY_ORGANIZATION_ID) {
-      return new ModernTreasury({ apiKey: process.env.MODERN_TREASURY_API_KEY, organizationID: process.env.MODERN_TREASURY_ORGANIZATION_ID });
+  });
+
+  // Citibank OAuth URL (Real integration)
+  app.get('/api/auth/citi/url', (req, res) => {
+    const clientId = process.env.CITI_CLIENT_ID;
+    if (!clientId) {
+      return res.status(500).json({ error: 'CITI_CLIENT_ID not configured in environment variables.' });
     }
-    throw new Error("Modern Treasury credentials not found.");
-  }
 
-  app.get("/api/modern_treasury/accounts", firebaseAuthCheck, async (req, res) => {
+    const appUrl = process.env.APP_URL || `https://${process.env.AIS_PROJECT_ID}-22946357919.us-west1.run.app`;
+    const redirectUri = `${appUrl}/auth/callback`;
+
+    const params = new URLSearchParams({
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      response_type: 'code',
+      scope: 'accounts_details',
+      state: 'citi_auth_state'
+    });
+
+    const authUrl = `https://sandbox.developer.citi.com/citidirect/v1/auth/oauth/authorize?${params}`;
+    res.json({ url: authUrl });
+  });
+
+  // OAuth Callback (shared handler)
+  app.get(['/auth/callback', '/auth/callback/'], async (req, res) => {
+    const { code, state } = req.query;
+
+    if (!code) {
+      return res.status(400).send('No code provided by OAuth provider.');
+    }
+
     try {
-      const mt = await getMTClient((req as any).user.uid);
-      const accounts = [];
-      for await (const account of mt.internalAccounts.list()) accounts.push(account);
-      res.json(accounts);
-    } catch (error) { res.status(500).json({ error: String(error) }); }
+      const clientId = process.env.CITI_CLIENT_ID;
+      const clientSecret = process.env.CITI_CLIENT_SECRET;
+      
+      const appUrl = process.env.APP_URL || `https://${process.env.AIS_PROJECT_ID}-22946357919.us-west1.run.app`;
+      const redirectUri = `${appUrl}/auth/callback`;
+
+      const authHeader = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+
+      const tokenResponse = await axios.post('https://sandbox.developer.citi.com/citidirect/v1/auth/oauth/token', 
+        new URLSearchParams({
+          grant_type: 'authorization_code',
+          code: code as string,
+          redirect_uri: redirectUri
+        }),
+        {
+          headers: {
+            'Authorization': `Basic ${authHeader}`,
+            'Content-Type': 'application/x-www-form-urlencoded'
+          }
+        }
+      );
+
+      // Send success message to parent window and close popup
+      res.send(`
+        <html>
+          <body style="background: #0A0A0A; color: white; font-family: sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh;">
+            <div style="text-align: center;">
+              <h2 style="color: #10B981;">Connection Successful</h2>
+              <p>Your Citibank account has been linked. Closing window...</p>
+              <script>
+                if (window.opener) {
+                  window.opener.postMessage({ 
+                    type: 'OAUTH_AUTH_SUCCESS', 
+                    service: 'citi',
+                    tokens: ${JSON.stringify(tokenResponse.data)}
+                  }, '*');
+                  setTimeout(() => window.close(), 1500);
+                } else {
+                  window.location.href = '/?citi_success=true';
+                }
+              </script>
+            </div>
+          </body>
+        </html>
+      `);
+    } catch (error: any) {
+      console.error('Citi OAuth Error:', error.response?.data || error.message);
+      res.status(500).send(`
+        <html>
+          <body style="background: #0A0A0A; color: white; font-family: sans-serif; padding: 2rem;">
+            <h1 style="color: #EF4444;">Authentication Failed</h1>
+            <p>${error.response?.data?.error_description || error.message}</p>
+            <p>Please check your CITI_CLIENT_SECRET and configuration.</p>
+            <button onclick="window.close()" style="background: white; color: black; border: none; padding: 0.5rem 1rem; border-radius: 0.5rem; cursor: pointer;">Close Window</button>
+          </body>
+        </html>
+      `);
+    }
   });
 
-  app.get("/api/modern_treasury/ledgers", firebaseAuthCheck, async (req, res) => {
-    try {
-      const mt = await getMTClient((req as any).user.uid);
-      const ledgers = [];
-      for await (const ledger of mt.ledgers.list()) ledgers.push(ledger);
-      res.json(ledgers);
-    } catch (error) { res.status(500).json({ error: String(error) }); }
+  // Citibank Connect Mock Endpoint (legacy)
+  app.post('/api/citi/connect', async (req, res) => {
+    res.json({ 
+      success: true, 
+      message: "Successfully connected to Citibank Partner APIs.",
+      externalAccountId: "citi_" + Math.random().toString(36).substring(7)
+    });
   });
 
-  // Plaid API
-  app.post("/api/plaid/create-link-token", async (req, res) => {
-    try {
-      const response = await plaidService.createLinkToken(req.body.userId);
-      res.json(response);
-    } catch (error) { res.status(500).json({ error: String(error) }); }
-  });
-
-  // FDX Payees
-  const INITIAL_PAYEES = [
-    { _id: "payee-1", payeeId: "payee-1", merchant: { displayName: "Verizon", name: { company: "Verizon" } }, status: "ACTIVE" },
-    { _id: "payee-2", payeeId: "payee-2", merchant: { displayName: "Con Edison", name: { company: "ConEd" } }, status: "ACTIVE" }
-  ];
-
-  app.get("/api/billmgmt/billpay/v2/fdx/v6/payees", async (req, res) => {
-    res.json({ payees: INITIAL_PAYEES });
-  });
-
-  // OAuth Callback
-  app.get("/auth/callback", async (req, res) => {
-      const { code, state } = req.query;
-      res.send("Authentication Successful! You can close this window.");
-  });
-
-  // Vite
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
+  // Vite integration
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
-    app.get('*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Aura Server running at http://0.0.0.0:${PORT}`);
   });
 }
 
-startServer();
+startServer().catch(err => {
+  console.error("Failed to start Aura server:", err);
+});

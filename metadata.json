@@ -1,5 +1,6 @@
 {
   "name": "Aura AI Bank",
-  "description": "An AI-powered modern banking experience with personalized financial insights and intelligent transaction management.",
-  "requestFramePermissions": []
+  "description": "Next-generation intelligent banking platform with Web3 and AI-driven insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
